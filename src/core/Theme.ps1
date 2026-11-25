@@ -30,7 +30,6 @@ $global:darkPalette = @{
     TabHoverBg     = "#0DFFFFFF"
     ChkBg          = "#2D2D2D"
     ChkBorder      = "#3D3D3D"
-    ChkHoverBorder = "#75D2FF"
 }
 
 $global:isWin11 = [Environment]::OSVersion.Version.Build -ge 22000
@@ -47,7 +46,6 @@ $global:lightPalette = @{
     TabHoverBg     = "#08000000"
     ChkBg          = "#FFFFFF"
     ChkBorder      = "#C8C8C8"
-    ChkHoverBorder = "#0067C0"
 }
 
 $global:brushConverter = [System.Windows.Media.BrushConverter]::new()
