@@ -28,3 +28,6 @@ winget_done_*
 
 # OS generated
 *.DS_Store
+
+# Local agent instructions
+.agents/
