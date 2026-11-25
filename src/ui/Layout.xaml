@@ -7,15 +7,16 @@
     <Window.Resources>
         <SolidColorBrush x:Key="AppBg"          Color="#B31E1E1E"/>
         <SolidColorBrush x:Key="AppText"        Color="#FFFFFF"/>
-        <SolidColorBrush x:Key="ControlBg"      Color="#2D2D2D"/>
-        <SolidColorBrush x:Key="BorderClr"      Color="#3D3D3D"/>
-        <SolidColorBrush x:Key="HoverBg"        Color="#353535"/>
-        <SolidColorBrush x:Key="PressedBg"      Color="#282828"/>
-        <SolidColorBrush x:Key="BottomBarBg"    Color="#602D2D2D"/>
+        <SolidColorBrush x:Key="ControlBg"      Color="#14FFFFFF"/>
+        <SolidColorBrush x:Key="OverlayBg"      Color="#E6202020"/>
+        <SolidColorBrush x:Key="BorderClr"      Color="#1CFFFFFF"/>
+        <SolidColorBrush x:Key="HoverBg"        Color="#22FFFFFF"/>
+        <SolidColorBrush x:Key="PressedBg"      Color="#0CFFFFFF"/>
+        <SolidColorBrush x:Key="BottomBarBg"    Color="#0DFFFFFF"/>
         <SolidColorBrush x:Key="TabSelBg"       Color="#1AFFFFFF"/>
         <SolidColorBrush x:Key="TabHoverBg"     Color="#0DFFFFFF"/>
-        <SolidColorBrush x:Key="ChkBg"          Color="#2D2D2D"/>
-        <SolidColorBrush x:Key="ChkBorder"      Color="#3D3D3D"/>
+        <SolidColorBrush x:Key="ChkBg"          Color="#10FFFFFF"/>
+        <SolidColorBrush x:Key="ChkBorder"      Color="#45FFFFFF"/>
         <SolidColorBrush x:Key="ChkHoverBorder" Color="#75D2FF"/>
         <SolidColorBrush x:Key="PrimaryClr"        Color="#55C5FF"/>
         <SolidColorBrush x:Key="PrimaryHoverClr"   Color="#75D2FF"/>
@@ -254,7 +255,7 @@
         </Grid>
         
         <Grid Name="ProgressOverlay" Visibility="Collapsed" Background="{DynamicResource AppBg}">
-            <Border Background="{DynamicResource ControlBg}" BorderBrush="{DynamicResource BorderClr}" BorderThickness="1" CornerRadius="8" Margin="40" Padding="20">
+            <Border Background="{DynamicResource OverlayBg}" BorderBrush="{DynamicResource BorderClr}" BorderThickness="1" CornerRadius="8" Margin="40" Padding="20">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>

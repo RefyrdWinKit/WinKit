@@ -21,15 +21,16 @@ public class Dwm {
 $global:darkPalette = @{
     AppBg          = "#B31E1E1E"
     AppText        = "#FFFFFF"
-    ControlBg      = "#2D2D2D"
-    BorderClr      = "#3D3D3D"
-    HoverBg        = "#353535"
-    PressedBg      = "#282828"
-    BottomBarBg    = "#602D2D2D"
+    ControlBg      = "#14FFFFFF"
+    OverlayBg      = "#E6202020"
+    BorderClr      = "#1CFFFFFF"
+    HoverBg        = "#22FFFFFF"
+    PressedBg      = "#0CFFFFFF"
+    BottomBarBg    = "#0DFFFFFF"
     TabSelBg       = "#1AFFFFFF"
     TabHoverBg     = "#0DFFFFFF"
-    ChkBg          = "#2D2D2D"
-    ChkBorder      = "#3D3D3D"
+    ChkBg          = "#10FFFFFF"
+    ChkBorder      = "#45FFFFFF"
 }
 
 $global:isWin11 = [Environment]::OSVersion.Version.Build -ge 22000
@@ -37,15 +38,16 @@ $global:isWin11 = [Environment]::OSVersion.Version.Build -ge 22000
 $global:lightPalette = @{
     AppBg          = if ($global:isWin11) { "#C0F3F3F3" } else { "#F3F3F3" }
     AppText        = "#1B1B1B"
-    ControlBg      = "#FFFFFF"
-    BorderClr      = "#D1D1D1"
-    HoverBg        = "#E5E5E5"
-    PressedBg      = "#D0D0D0"
-    BottomBarBg    = if ($global:isWin11) { "#90FFFFFF" } else { "#E0E0E0" }
+    ControlBg      = if ($global:isWin11) { "#80FFFFFF" } else { "#FFFFFF" }
+    OverlayBg      = if ($global:isWin11) { "#EBFFFFFF" } else { "#FFFFFF" }
+    BorderClr      = if ($global:isWin11) { "#1F000000" } else { "#D1D1D1" }
+    HoverBg        = if ($global:isWin11) { "#55E5E5E5" } else { "#E5E5E5" }
+    PressedBg      = if ($global:isWin11) { "#38D0D0D0" } else { "#D0D0D0" }
+    BottomBarBg    = if ($global:isWin11) { "#55FFFFFF" } else { "#E0E0E0" }
     TabSelBg       = "#15000000"
     TabHoverBg     = "#08000000"
-    ChkBg          = "#FFFFFF"
-    ChkBorder      = "#C8C8C8"
+    ChkBg          = if ($global:isWin11) { "#80FFFFFF" } else { "#FFFFFF" }
+    ChkBorder      = if ($global:isWin11) { "#40000000" } else { "#C8C8C8" }
 }
 
 $global:brushConverter = [System.Windows.Media.BrushConverter]::new()
