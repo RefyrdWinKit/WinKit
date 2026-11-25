@@ -31,3 +31,4 @@ winget_done_*
 
 # Local agent instructions
 .agents/
+.AI/
