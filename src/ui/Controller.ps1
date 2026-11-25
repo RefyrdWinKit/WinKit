@@ -155,7 +155,7 @@ function Initialize-UIController($winControls) {
     $script:searchSeq = 0
     $global:depCheckBoxes = @{}
 
-    function Get-SelectedApps {
+    function script:Get-SelectedApps {
         $selected = @()
         $seenIds = @{}
         foreach ($chk in ($script:checkBoxes + $script:onlineCheckBoxes)) {
@@ -170,7 +170,7 @@ function Initialize-UIController($winControls) {
         return $selected
     }
 
-    function Update-InstallCount {
+    function script:Update-InstallCount {
         $count = @(Get-SelectedApps).Count
         if ($count -gt 0) {
             $script:btnInstall.Content = "Install ($count)"
@@ -228,6 +228,7 @@ function Initialize-UIController($winControls) {
         param(
             [scriptblock]$Worker,
             [object[]]$Arguments = @(),
+            $Context = $null,
             [scriptblock]$OnComplete
         )
         try {
@@ -241,7 +242,7 @@ function Initialize-UIController($winControls) {
             $asyncResult = $ps.BeginInvoke()
             $timer = New-Object System.Windows.Threading.DispatcherTimer
             $timer.Interval = [TimeSpan]::FromMilliseconds(150)
-            $timer.Tag = @{ Ps = $ps; Runspace = $runspace; Async = $asyncResult; OnComplete = $OnComplete }
+            $timer.Tag = @{ Ps = $ps; Runspace = $runspace; Async = $asyncResult; Context = $Context; OnComplete = $OnComplete }
             $timer.Add_Tick({
                 param($sender, $e)
                 $null = $e
@@ -259,12 +260,12 @@ function Initialize-UIController($winControls) {
                         $state.Runspace.Close()
                         $state.Runspace.Dispose()
                     }
-                    & $state.OnComplete $res $err
+                    & $state.OnComplete $res $err $state.Context
                 }
             })
             $timer.Start()
         } catch {
-            & $OnComplete $null $_
+            & $OnComplete $null $_ $Context
         }
     }
 
@@ -440,9 +441,9 @@ function Initialize-UIController($winControls) {
             winget search --query $searchTerm --source winget --accept-source-agreements --count 25 2>$null
         }
 
-        Start-BackgroundTask -Worker $worker -Arguments @($q) -OnComplete {
-            param($lines, $err)
-            if ($seq -ne $script:searchSeq) { return }
+        Start-BackgroundTask -Worker $worker -Arguments @($q) -Context @{ Seq = $seq; Query = $q } -OnComplete {
+            param($lines, $err, $ctx)
+            if ($ctx.Seq -ne $script:searchSeq) { return }
             if ($script:pbSearchLoading) { $script:pbSearchLoading.Visibility = "Collapsed" }
 
             if ($err) {
@@ -457,14 +458,14 @@ function Initialize-UIController($winControls) {
             Clear-OnlineSearchResults
             if ($foundApps.Count -eq 0) {
                 if ($script:lblSearchResultStatus) {
-                    $script:lblSearchResultStatus.Text = "No packages found for `"$q`" in WinGet repository."
+                    $script:lblSearchResultStatus.Text = "No packages found for `"$($ctx.Query)`" in WinGet repository."
                     $script:lblSearchResultStatus.Opacity = 0.8
                 }
                 return
             }
 
             if ($script:lblSearchResultStatus) {
-                $script:lblSearchResultStatus.Text = "Found $($foundApps.Count) package(s) for `"$q`". Select to include in installation:"
+                $script:lblSearchResultStatus.Text = "Found $($foundApps.Count) package(s) for `"$($ctx.Query)`". Select to include in installation:"
                 $script:lblSearchResultStatus.Opacity = 0.8
             }
 

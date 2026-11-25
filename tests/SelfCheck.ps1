@@ -1,4 +1,8 @@
 ﻿# Non-destructive self-checks for WinKit parsers, ID validation, status classifier, presets, and syntax
+if ([System.Threading.Thread]::CurrentThread.GetApartmentState() -ne 'STA') {
+    & powershell.exe -Sta -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath
+    exit $LASTEXITCODE
+}
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 
@@ -77,4 +81,32 @@ try {
     Remove-Item $tmpJson, $tmpTxt -Force -ErrorAction SilentlyContinue
 }
 
-Write-Output "PASS: $($psFiles.Count) scripts parsed, XAML valid, $($global:apps.Count) catalog IDs, parser, status classifier & preset checks passed."
+# 7. Validate WPF UI initialization, search filtering (including '['), and async search callback wiring
+Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
+$xamlRaw = Get-Content (Join-Path $root 'src\ui\Layout.xaml') -Raw -Encoding UTF8
+$global:win = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader([xml]$xamlRaw)))
+$testControls = @{
+    Win = $global:win; TabCats = $global:win.FindName('TabCats'); BtnSelectAll = $global:win.FindName('BtnSelectAll')
+    BtnClearAll = $global:win.FindName('BtnClearAll'); BtnSave = $global:win.FindName('BtnSave'); BtnLoad = $global:win.FindName('BtnLoad')
+    BtnInstall = $global:win.FindName('BtnInstall'); BtnTheme = $global:win.FindName('BtnTheme'); BtnDebug = $global:win.FindName('BtnDebug')
+    ProgressOverlay = $global:win.FindName('ProgressOverlay'); LblProgressTitle = $global:win.FindName('LblProgressTitle')
+    LblProgress = $global:win.FindName('LblProgress'); PbInstall = $global:win.FindName('PbInstall'); TxtLog = $global:win.FindName('TxtLog')
+    SummaryScroll = $global:win.FindName('SummaryScroll'); SummaryPanel = $global:win.FindName('SummaryPanel')
+    BtnCancelInstall = $global:win.FindName('BtnCancelInstall'); TxtSearch = $global:win.FindName('TxtSearch')
+    TxtSearchPlaceholder = $global:win.FindName('TxtSearchPlaceholder'); BtnClearSearch = $global:win.FindName('BtnClearSearch')
+    BtnExportLog = $global:win.FindName('BtnExportLog'); SearchResultsView = $global:win.FindName('SearchResultsView')
+    SearchResultsWrap = $global:win.FindName('SearchResultsWrap'); LblSearchResultStatus = $global:win.FindName('LblSearchResultStatus')
+    BtnBackToCats = $global:win.FindName('BtnBackToCats'); PbSearchLoading = $global:win.FindName('PbSearchLoading')
+    BtnUpgradeAll = $global:win.FindName('BtnUpgradeAll')
+}
+. (Join-Path $root 'src\core\Theme.ps1')
+Initialize-UIController $testControls
+$testControls.TxtSearch.Text = '[chrome'
+$testControls.TxtSearch.Text = ''
+Assert-True ($testControls.BtnInstall.Content -eq 'Install') 'Install button count should reset cleanly'
+& $script:doOnlineSearch 'notepad'
+Assert-True ($testControls.SearchResultsView.Visibility -eq 'Visible') 'Online search should switch to SearchResultsView'
+$script:searchSeq++
+$global:win.Close()
+
+Write-Output "PASS: $($psFiles.Count) scripts parsed, XAML valid, $($global:apps.Count) catalog IDs, parser, status classifier, presets & UI smoke checks passed."
