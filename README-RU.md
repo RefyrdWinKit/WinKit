@@ -11,13 +11,13 @@
 Запуск через PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/Refyrd/WinKit/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/RefyrdWinKit/WinKit/main/install.ps1 | iex
 ```
 
 Или локально из репозитория:
 
 ```powershell
-git clone https://github.com/Refyrd/WinKit.git
+git clone git@github.com:RefyrdWinKit/WinKit.git
 cd WinKit
 powershell -ExecutionPolicy Bypass -File winkit.ps1
 ```

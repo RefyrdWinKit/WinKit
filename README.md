@@ -11,13 +11,13 @@ Minimal Windows 10/11 GUI installer and updater powered by WinGet.
 Run via PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/Refyrd/WinKit/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/RefyrdWinKit/WinKit/main/install.ps1 | iex
 ```
 
 Or clone and run locally:
 
 ```powershell
-git clone https://github.com/Refyrd/WinKit.git
+git clone git@github.com:RefyrdWinKit/WinKit.git
 cd WinKit
 powershell -ExecutionPolicy Bypass -File winkit.ps1
 ```

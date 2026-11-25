@@ -1,5 +1,5 @@
 # WinKit - Quick Install Script
-# Run with: irm https://raw.githubusercontent.com/Refyrd/WinKit/main/install.ps1 | iex
+# Run with: irm https://raw.githubusercontent.com/RefyrdWinKit/WinKit/main/install.ps1 | iex
 
 Write-Host ""
 Write-Host "  [*] WinKit - Downloading application..." -ForegroundColor Cyan
@@ -10,7 +10,7 @@ if (Test-Path $tempDir) { Remove-Item -Path $tempDir -Recurse -Force -ErrorActio
 New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
 
 # shortcut: downloads mutable main.zip without hash check; pin a release tag and SHA-256 when cutting a release
-$zipUrl = "https://github.com/Refyrd/WinKit/archive/refs/heads/main.zip"
+$zipUrl = "https://github.com/RefyrdWinKit/WinKit/archive/refs/heads/main.zip"
 $zipPath = Join-Path $tempDir "winkit.zip"
 
 try {
@@ -30,7 +30,7 @@ try {
     }
 } catch {
     Write-Host "  Launch failed: $_" -ForegroundColor Red
-    Write-Host "  Try: git clone https://github.com/Refyrd/WinKit.git" -ForegroundColor Gray
+    Write-Host "  Try: git clone https://github.com/RefyrdWinKit/WinKit.git" -ForegroundColor Gray
 } finally {
     Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
 }
