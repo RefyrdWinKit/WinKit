@@ -1,118 +1,47 @@
-<div align="center">
+# WinKit
 
-# ⚡ WinKit
+Minimal Windows 10/11 GUI installer and updater powered by WinGet.
 
-### Modern Windows 11 Fluent App Installer & WinGet Store
-
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Windows](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6?logo=windows)](https://www.microsoft.com/windows)
-[![WinGet](https://img.shields.io/badge/Powered%20by-WinGet-4B0082)](https://github.com/microsoft/winget-cli)
-
-**🇺🇸 English** | **[🇷🇺 Русский](README.ru.md)**
-
-<br>
+[English](README.md) | [Русский](README-RU.md)
 
 ![WinKit Demo](winkit-preview.gif)
 
-<br>
+## Quick Start
 
-**Skip the boring setup.** WinKit is a sleek, modern Windows 11 Fluent GUI app installer powered by WinGet. Pick all the apps you need across categories or search the entire WinGet repository directly from the app, then install them all in one go — no clicking through wizards, no hunting for downloads.
+Run via PowerShell:
 
-</div>
-
----
-
-## 🚀 Quick Start
-
-**One-liner (PowerShell):**
 ```powershell
 irm https://raw.githubusercontent.com/Refyrd/WinKit/main/install.ps1 | iex
 ```
 
-*This will download and launch the WinKit WPF GUI directly.*
+Or clone and run locally:
 
-### Or clone the repo
-
-```bash
+```powershell
 git clone https://github.com/Refyrd/WinKit.git
 cd WinKit
 powershell -ExecutionPolicy Bypass -File winkit.ps1
 ```
 
----
+## Features
 
-## ✨ Features & Highlights
+- Curated catalog of 42 applications across 7 categories (`src/config/Apps.ps1`)
+- Online WinGet search directly from the search bar (`Enter`)
+- Background scan for installed apps and available updates
+- One-click `Upgrade All` via `winget upgrade --all`
+- Save and load presets in WinGet JSON (`.json`) or plain text (`.txt`)
+- Sequential batch installation with live logs, exportable output, and cancel support
+- Automatic UAC elevation with user-context fallback for user-scoped apps (Discord, Telegram, Spotify, Roblox, Obsidian, Notion)
+- Windows 11 Mica backdrop and automatic light/dark theme sync with manual toggle
 
-- 🌐 **WinGet Online Search**: Search and install ANY application directly from the official WinGet catalog without leaving the app.
-- 🔍 **Installed Detection & Version Tags**: Scans your PC in the background on launch, displaying current version badges and highlighting available updates.
-- 🔄 **One-Click Upgrade All**: Batch-update all outdated software on your computer using native WinGet with real-time logs.
-- 💾 **Native WinGet JSON & TXT Presets**: Export and import application bundles in official Microsoft WinGet JSON format (`.json`) or classic text (`.txt`).
-- 🪟 **Native Windows 11 Mica Backdrop**: Translucent glass background integrating seamlessly with Windows 11 desktop theme.
-- 🌓 **Dynamic Light & Dark Themes**: Auto-detects system theme on launch and includes an instant toggle button.
-- 🎨 **Modern WPF Fluent UI**: Rounded tab categories, vector checkmarks, custom buttons, and smooth hover states.
-- 🔢 **Dynamic Selection Counter**: Real-time app counter on the Install button (`Install (5)`).
-- 🛡️ **Smart Elevation & Fallbacks**: Auto-elevates to Administrator while gracefully falling back to user-space execution for sensitive apps (Discord, Telegram, Spotify).
-- ⚡ **One-Click Batch Install**: Select apps across multiple categories and install them all via WinGet concurrently.
+## Requirements
 
----
+- Windows 10 (1709+) or Windows 11
+- WinGet (pre-installed on Windows 11; automatically bootstrapped via `Microsoft.WinGet.Client` if missing)
 
-## 🎯 Features
+## Adding Apps
 
-| Feature | Description |
-|---------|-------------|
-| 🌐 **WinGet Search** | Online search directly into the official WinGet repository |
-| 🔍 **Installed Status** | Background scanner detects installed software and newer versions |
-| 🔄 **Upgrade All** | One-click button to update all outdated software on your PC |
-| 💾 **Preset Support** | Save and load selections as official WinGet `.json` or `.txt` |
-| 🖥 **Modern WPF GUI** | Clean Fluent Design interface built natively with WPF |
-| 🪟 **Mica Blur** | Native DWM Mica background effect for Windows 11 |
-| 🌓 **Light & Dark Mode** | Automatic OS theme detection + live switch button |
-| 🗂 **Categorized Tabs** | Browsers, Development, Gaming, Media, Utilities, System, Productivity |
-| 📦 **Batch Controls** | Quick `Select All`, `Clear All`, and `Upgrade All` buttons |
-| 📊 **Progress & Logs** | Live download progress bar, streaming output, and exportable logs |
-| 🛡 **Auto-Elevate** | Requests administrator privileges automatically |
+Edit [`src/config/Apps.ps1`](src/config/Apps.ps1) and add entries with `Name`, `Id`, and `Cat` to `$global:apps`.
 
----
+## License
 
-## 📦 Built-in Catalog (42+ Apps) + WinGet Store
-
-| Category | Included Applications |
-|----------|-----------------------|
-| 🌐 **Browsers** | Google Chrome, Mozilla Firefox, Brave Browser, Vivaldi |
-| 💻 **Development** | VS Code, Git, Python 3, Node.js LTS, Notepad++, Docker Desktop, Figma |
-| 🎮 **Gaming / Social** | Steam, Epic Games, Discord, TeamSpeak 3, TeamSpeak 6 Beta, Telegram, Roblox |
-| 🎬 **Media** | VLC Media Player, Spotify, OBS Studio, K-Lite Codec Pack, Audacity, GIMP |
-| 🛠 **Utilities** | 7-Zip, WinRAR, qBittorrent, MSI Afterburner, PowerToys, Everything, Rufus, ShareX, Revo Uninstaller, WizTree |
-| ⚙️ **System** | DirectX Web Setup, Visual C++ Redist, CPU-Z, GPU-Z, HWMonitor, CrystalDiskInfo |
-| 📝 **Productivity** | Obsidian, Notion |
-
-> 💡 **Want to add your own permanent apps?** Edit [`src/config/Apps.ps1`](src/config/Apps.ps1) — add `Name`, `Id`, and `Cat` into the `$global:apps` array.
-
----
-
-## 📋 Requirements
-
-- **Windows 10** (version 1709+) or **Windows 11**
-- **WinGet** — pre-installed on Windows 11; automatically bootstrapped if missing on stripped OS editions.
-
----
-
-## 🤝 Contributing
-
-1. Fork this repo
-2. Add new apps to [`src/config/Apps.ps1`](src/config/Apps.ps1)
-3. Submit a pull request
-
----
-
-## 📄 License
-
-[MIT](LICENSE) — do whatever you want with it.
-
----
-
-<div align="center">
-
-**Made with ❤️ by [Refyrd](https://github.com/Refyrd)**
-
-</div>
+[MIT](LICENSE)
