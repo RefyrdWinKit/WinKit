@@ -44,4 +44,4 @@ powershell -ExecutionPolicy Bypass -File winkit.ps1
 
 ## Лицензия
 
-[MIT](LICENSE)
+[Apache 2.0](LICENSE) (см. [NOTICE](NOTICE))

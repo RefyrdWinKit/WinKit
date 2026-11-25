@@ -44,4 +44,4 @@ Edit [`src/config/Apps.ps1`](src/config/Apps.ps1) and add entries with `Name`, `
 
 ## License
 
-[MIT](LICENSE)
+[Apache 2.0](LICENSE) (see [NOTICE](NOTICE))
