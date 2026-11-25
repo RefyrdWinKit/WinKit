@@ -4,8 +4,7 @@
         'PSAvoidGlobalVars',
         'PSUseShouldProcessForStateChangingFunctions',
         'PSAvoidUsingWriteHost',
-        'PSAvoidTrailingWhitespace',
-        'PSAvoidUsingWMICmdlet'
+        'PSAvoidTrailingWhitespace'
     )
 }
 

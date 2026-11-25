@@ -5,6 +5,31 @@ function Test-SafePackageId {
     return (-not [string]::IsNullOrWhiteSpace($Id)) -and ($Id -match '^[a-zA-Z0-9._+\-]+$')
 }
 
+function Get-InstallResultStatus {
+    param([int]$Code, [string]$Log = "", [bool]$Cancelled = $false)
+
+    if ($Cancelled) {
+        return @{ Color = "#FFA500"; Text = "Cancelled"; Desc = "Installation was cancelled by the user." }
+    }
+
+    $alreadyInstalledCodes = @(-1978335220, 2316632076, -1978335189, 2316632107, -1978335187, 2316632109, -1978335190, 2316632106)
+    $alreadyInstalledRegex = "(?i)(No (?:newer|available|applicable) (?:package|upgrade|update)|найден.*установленный пакет.*не найдено|не найдено.*обновлен|не найдено.*верси|уже установлен|установлена последняя версия|already installed.*no (?:newer|available|upgrade))"
+    $isInstalledNoUpdate = ($Code -in $alreadyInstalledCodes) -or (($Log -match $alreadyInstalledRegex) -and -not ($Log -match "(?i)(Successfully installed|Успешно установлен)"))
+    if ($isInstalledNoUpdate) {
+        return @{ Color = "#00BCF9"; Text = "Already installed (Up to date)"; Desc = "The latest version is already installed on your system." }
+    }
+
+    $isSuccess = $Code -in @(0, 3010, 1641)
+    $isUpgradeAttempt = $Log -match "(?i)(Trying to upgrade|попытка обновить|Upgrading|Обновление пакета)"
+    if ($isSuccess -and $isUpgradeAttempt) {
+        return @{ Color = "#FFC83B"; Text = "Successfully updated"; Desc = "Application was updated to the newest available release." }
+    }
+    if ($isSuccess) {
+        return @{ Color = "#107C41"; Text = "Installed successfully"; Desc = "Completed with exit code $Code." }
+    }
+    return @{ Color = "#E81123"; Text = "Installation failed"; Desc = "Installer returned error code $Code." }
+}
+
 function Start-AppsInstallation($toInstall, $winControls, [switch]$isUpgradeAll) {
     $TxtLog = $winControls.TxtLog
     $LblProgressTitle = $winControls.LblProgressTitle
@@ -82,7 +107,7 @@ function Start-AppsInstallation($toInstall, $winControls, [switch]$isUpgradeAll)
             $procHandle = $null
             if ($asUserFallback) {
                 $vbsCmd = "Set WshShell = CreateObject(`"WScript.Shell`")`r`nWshShell.Run chr(34) & `"$batPath`" & Chr(34), 0`r`nSet WshShell = Nothing"
-                [System.IO.File]::WriteAllText($vbsPath, $vbsCmd, [System.Text.Encoding]::Default)
+                [System.IO.File]::WriteAllText($vbsPath, $vbsCmd, [System.Text.Encoding]::Unicode)
                 Start-Process "explorer.exe" -ArgumentList "`"$vbsPath`""
             } else {
                 $psi = New-Object System.Diagnostics.ProcessStartInfo
@@ -186,9 +211,10 @@ function Start-AppsInstallation($toInstall, $winControls, [switch]$isUpgradeAll)
                         $lastProgressUpdate = $now
                         $currBytes = 0
                         try {
-                            $dlDirs = Get-ChildItem -Path "$env:TEMP\WinGet", "$env:LOCALAPPDATA\Temp\WinGet" -Filter "*$($app.Id)*" -Directory -ErrorAction SilentlyContinue
-                            if ($dlDirs) {
-                                $dlFiles = Get-ChildItem -Path $dlDirs.FullName -File -Recurse -ErrorAction SilentlyContinue
+                            $newestDir = Get-ChildItem -Path "$env:TEMP\WinGet", "$env:LOCALAPPDATA\Temp\WinGet" -Filter "*$($app.Id)*" -Directory -ErrorAction SilentlyContinue |
+                                Sort-Object LastWriteTime -Descending | Select-Object -First 1
+                            if ($newestDir) {
+                                $dlFiles = Get-ChildItem -Path $newestDir.FullName -File -Recurse -ErrorAction SilentlyContinue
                                 if ($dlFiles) {
                                     $currBytes = ($dlFiles | Measure-Object -Property Length -Sum).Sum
                                 }
@@ -249,8 +275,8 @@ function Start-AppsInstallation($toInstall, $winControls, [switch]$isUpgradeAll)
         Remove-Item $tmpOut, $tmpDone, $batPath, $vbsPath -Force -ErrorAction SilentlyContinue
 
         if (-not $global:cancelInstall) {
-            # Bundled bloatware cleanup & background downloader eradication
-            if ($wArgs -match "--skip-dependencies") {
+            # Bundled bloatware cleanup & background downloader eradication (only after successful install)
+            if ($wArgs -match "--skip-dependencies" -and $finalCode -in @(0, 3010, 1641)) {
                 if ($app.Name -eq "TeamSpeak 3") {
                     $TxtLog.AppendText("`n[+] Ensuring bundled Overwolf is removed...`n")
                     $TxtLog.ScrollToEnd()
@@ -303,50 +329,12 @@ function Start-AppsInstallation($toInstall, $winControls, [switch]$isUpgradeAll)
     $PbInstall.IsIndeterminate = $false
     $PbInstall.Value = 100
     $LblProgress.Text = "Finished!"
-    
-    $global:allLogControls = @()
 
     foreach ($res in $installResults) {
-        $code = $res.Code
-        $logStr = $res.Log
-        
-        # 1. Already installed (no updates needed)
-        $alreadyInstalledCodes = @(-1978335220, 2316632076, -1978335189, 2316632107, -1978335187, 2316632109, -1978335190, 2316632106)
-        $alreadyInstalledRegex = "(?i)(No (?:newer|available|applicable) (?:package|upgrade|update)|найден.*установленный пакет.*не найдено|не найдено.*обновлен|не найдено.*верси|уже установлен|установлена последняя версия|already installed.*no (?:newer|available|upgrade))"
-        $isInstalledNoUpdate = ($code -in $alreadyInstalledCodes -or ($logStr -match $alreadyInstalledRegex -and -not ($logStr -match "(?i)(Successfully installed|Успешно установлен)")))
-
-        # 2. Updated / Upgraded
-        $isUpgradeAttempt = ($logStr -match "(?i)(Trying to upgrade|попытка обновить|Upgrading|Обновление пакета)")
-        $isSuccess = ($code -eq 0 -or $code -eq 3010 -or $code -eq 1641 -or ($logStr -match "(?i)(Successfully installed|Успешно установлен)"))
-        $isUpdated = ($isUpgradeAttempt -and $isSuccess -and -not $isInstalledNoUpdate)
-        
-        switch ($true) {
-            { $res.Cancelled } {
-                $statusColor = "#FFA500" # Orange
-                $statusText = "Cancelled"
-                $statusDesc = "Installation was cancelled by the user."
-            }
-            { $isInstalledNoUpdate } {
-                $statusColor = "#00BCF9" # Neutral Cyan
-                $statusText = "Already installed (Up to date)"
-                $statusDesc = "The latest version is already installed on your system."
-            }
-            { $isUpdated } {
-                $statusColor = "#FFC83B" # Neutral Yellow
-                $statusText = "Successfully updated"
-                $statusDesc = "Application was updated to the newest available release."
-            }
-            { $isSuccess } {
-                $statusColor = "#107C41" # Green
-                $statusText = "Installed successfully"
-                $statusDesc = "Completed with exit code $code."
-            }
-            default {
-                $statusColor = "#E81123" # Red
-                $statusText = "Installation failed"
-                $statusDesc = "Installer returned error code $code."
-            }
-        }
+        $st = Get-InstallResultStatus -Code ([int]$res.Code) -Log ([string]$res.Log) -Cancelled ([bool]$res.Cancelled)
+        $statusColor = $st.Color
+        $statusText = $st.Text
+        $statusDesc = $st.Desc
 
         # Build Card Container
         $card = New-Object System.Windows.Controls.Border
@@ -440,8 +428,6 @@ function Start-AppsInstallation($toInstall, $winControls, [switch]$isUpgradeAll)
         $btnLog.Tag = $logContainer
         [System.Windows.Controls.Grid]::SetColumn($btnLog, 2)
         [System.Windows.Controls.Grid]::SetRow($btnLog, 0)
-
-        $global:allLogControls += @{ Button = $btnLog; Container = $logContainer }
 
         $btnLog.Add_Click({
             $target = $this.Tag

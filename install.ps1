@@ -9,6 +9,7 @@ $tempDir = Join-Path $env:TEMP "WinKit"
 if (Test-Path $tempDir) { Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue }
 New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
 
+# shortcut: downloads mutable main.zip without hash check; pin a release tag and SHA-256 when cutting a release
 $zipUrl = "https://github.com/Refyrd/WinKit/archive/refs/heads/main.zip"
 $zipPath = Join-Path $tempDir "winkit.zip"
 

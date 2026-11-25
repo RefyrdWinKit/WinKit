@@ -1,4 +1,4 @@
-﻿# Non-destructive self-checks for WinKit parsers, ID validation, and syntax
+﻿# Non-destructive self-checks for WinKit parsers, ID validation, status classifier, presets, and syntax
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 
@@ -23,20 +23,23 @@ foreach ($f in $psFiles) {
 # 3. Validate built-in catalog IDs and Test-SafePackageId
 foreach ($app in $global:apps) {
     Assert-True (Test-SafePackageId $app.Id) "Built-in app ID should be valid: $($app.Id)"
+    Assert-True ($app.Id -match '^[^\s.]+\.[^\s]+$') "Built-in app ID should contain dot: $($app.Id)"
 }
 Assert-True (-not (Test-SafePackageId 'Foo.Bar & calc.exe')) 'Command injection in ID must be rejected'
 Assert-True (-not (Test-SafePackageId 'Foo.Bar" --force')) 'Quote injection in ID must be rejected'
 Assert-True (-not (Test-SafePackageId '')) 'Empty ID must be rejected'
 
-# 4. Validate ConvertFrom-WingetTable across English, localized, and Source-column tables
+# 4. Validate ConvertFrom-WingetTable across English, localized, and footer lines
 $enList = @(
     'Name          Id                  Version  Available  Source'
     '------------------------------------------------------------'
     'Git           Git.Git             2.56.1              winget'
     '7-Zip         7zip.7zip           24.08    24.09      winget'
+    ''
+    '1 upgrades available. Run winget upgrade --all to upgrade.'
 )
 $parsedEn = @(ConvertFrom-WingetTable -Lines $enList)
-Assert-True ($parsedEn.Count -eq 2) 'Expected 2 rows in English table'
+Assert-True ($parsedEn.Count -eq 2) 'Expected 2 rows in English table (footer ignored)'
 Assert-True ($parsedEn[0].Id -eq 'Git.Git' -and $parsedEn[0].Available -eq '') 'Empty Available must stay empty when Source exists'
 Assert-True ($parsedEn[1].Id -eq '7zip.7zip' -and $parsedEn[1].Available -eq '24.09') 'Available version should be parsed'
 
@@ -48,4 +51,30 @@ $ruList = @(
 $parsedRu = @(ConvertFrom-WingetTable -Lines $ruList)
 Assert-True ($parsedRu.Count -eq 1 -and $parsedRu[0].Id -eq 'Notepad++.Notepad++' -and $parsedRu[0].Available -eq '8.9.9.1') 'Localized headers should parse cleanly'
 
-Write-Output "PASS: $($psFiles.Count) scripts parsed, XAML valid, $($global:apps.Count) catalog IDs & table parser checks passed."
+# 5. Validate Get-InstallResultStatus classification
+$stCancel = Get-InstallResultStatus -Code -1 -Log '' -Cancelled $true
+Assert-True ($stCancel.Text -eq 'Cancelled') 'Cancelled status mismatch'
+$stSame = Get-InstallResultStatus -Code -1978335220 -Log 'No available upgrade found'
+Assert-True ($stSame.Text -eq 'Already installed (Up to date)') 'Already installed code mismatch'
+$stUpd = Get-InstallResultStatus -Code 0 -Log 'Trying to upgrade... Successfully installed'
+Assert-True ($stUpd.Text -eq 'Successfully updated') 'Updated status mismatch'
+$stPartialFail = Get-InstallResultStatus -Code -1978335212 -Log 'Trying to upgrade... Successfully installed App1... Installer failed for App2'
+Assert-True ($stPartialFail.Text -eq 'Installation failed') 'Non-zero exit code must fail even if earlier log line succeeded'
+
+# 6. Validate JSON & TXT preset round-trip
+$tmpJson = Join-Path $env:TEMP "winkit_test_preset_$PID.json"
+$tmpTxt = Join-Path $env:TEMP "winkit_test_preset_$PID.txt"
+try {
+    $jsonOut = ConvertTo-WinKitPresetJson -PackageIds @('Git.Git', 'Mozilla.Thunderbird')
+    [System.IO.File]::WriteAllText($tmpJson, $jsonOut, [System.Text.UTF8Encoding]::new($false))
+    $loadedJson = @(Import-WinKitPresetIds -Path $tmpJson)
+    Assert-True ($loadedJson.Count -eq 2 -and $loadedJson[0] -eq 'Git.Git' -and $loadedJson[1] -eq 'Mozilla.Thunderbird') 'JSON preset round-trip failed'
+
+    [System.IO.File]::WriteAllText($tmpTxt, "Git.Git`n`n7zip.7zip`n", [System.Text.UTF8Encoding]::new($false))
+    $loadedTxt = @(Import-WinKitPresetIds -Path $tmpTxt)
+    Assert-True ($loadedTxt.Count -eq 2 -and $loadedTxt[1] -eq '7zip.7zip') 'TXT preset round-trip failed'
+} finally {
+    Remove-Item $tmpJson, $tmpTxt -Force -ErrorAction SilentlyContinue
+}
+
+Write-Output "PASS: $($psFiles.Count) scripts parsed, XAML valid, $($global:apps.Count) catalog IDs, parser, status classifier & preset checks passed."
