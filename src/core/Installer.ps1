@@ -1,5 +1,10 @@
 ﻿# --- WinKit Installation Engine ---
 
+function Test-SafePackageId {
+    param([string]$Id)
+    return (-not [string]::IsNullOrWhiteSpace($Id)) -and ($Id -match '^[a-zA-Z0-9._+\-]+$')
+}
+
 function Start-AppsInstallation($toInstall, $winControls, [switch]$isUpgradeAll) {
     $TxtLog = $winControls.TxtLog
     $LblProgressTitle = $winControls.LblProgressTitle
@@ -34,16 +39,24 @@ function Start-AppsInstallation($toInstall, $winControls, [switch]$isUpgradeAll)
         $LblProgress.Text = if ($isUpgradeAll) { "Running WinGet Upgrade..." } else { "Installing ($count / $($toInstall.Count)): $($app.Name)" }
         $TxtLog.AppendText("`n---> Starting: $($app.Name)`n")
         $TxtLog.ScrollToEnd()
-        DoEvents
+        Invoke-DoEvents
 
-                if ($isUpgradeAll) {
+        if (-not $isUpgradeAll -and -not (Test-SafePackageId $app.Id)) {
+            $errMsg = "Invalid package identifier: $($app.Id)"
+            $TxtLog.AppendText("[!] $errMsg`n")
+            $TxtLog.ScrollToEnd()
+            $installResults += @{ App = $app; Code = -1; Cancelled = $false; Log = $errMsg }
+            continue
+        }
+
+        if ($isUpgradeAll) {
             $wArgs = "upgrade --all --silent --disable-interactivity --accept-package-agreements --accept-source-agreements"
         } else {
-            $wArgs = "install --exact --id=$($app.Id) --source=winget --silent --disable-interactivity --accept-package-agreements --accept-source-agreements"
+            $wArgs = "install --exact --id=`"$($app.Id)`" --source=winget --silent --disable-interactivity --accept-package-agreements --accept-source-agreements"
         }
         if ($app.Dep -and $global:depCheckBoxes.ContainsKey($app.Name)) {
             $depChk = $global:depCheckBoxes[$app.Name]
-            if (-not $depChk.IsChecked) { 
+            if (-not $depChk.IsChecked) {
                 $wArgs += " --skip-dependencies"
             }
         }
@@ -51,19 +64,17 @@ function Start-AppsInstallation($toInstall, $winControls, [switch]$isUpgradeAll)
         $useFallback = ($app.Scope -eq "User" -and $global:isAdmin)
         $finalCode = 0
 
-        $tmpOut = "$env:TEMP\winget_out_$($app.Id).log"
-        $tmpDone = "$env:TEMP\winget_done_$($app.Id).log"
-        $batPath = "$env:TEMP\winget_run_$($app.Id).bat"
-        $vbsPath = "$env:TEMP\winget_run_$($app.Id).vbs"
+        $safeId = $app.Id -replace '[^a-zA-Z0-9._-]', '_'
+        $tmpOut = "$env:TEMP\winget_out_$safeId.log"
+        $tmpDone = "$env:TEMP\winget_done_$safeId.log"
+        $batPath = "$env:TEMP\winget_run_$safeId.bat"
+        $vbsPath = "$env:TEMP\winget_run_$safeId.vbs"
 
         # Helper to run winget and stream output without blocking the UI thread
         $runWinget = {
             param([bool]$asUserFallback)
 
-            if (Test-Path $tmpOut) { Remove-Item $tmpOut -Force -ErrorAction SilentlyContinue }
-            if (Test-Path $tmpDone) { Remove-Item $tmpDone -Force -ErrorAction SilentlyContinue }
-            if (Test-Path $batPath) { Remove-Item $batPath -Force -ErrorAction SilentlyContinue }
-            if (Test-Path $vbsPath) { Remove-Item $vbsPath -Force -ErrorAction SilentlyContinue }
+            Remove-Item $tmpOut, $tmpDone, $batPath, $vbsPath -Force -ErrorAction SilentlyContinue
 
             $batCmd = "@echo off`r`nchcp 65001 > nul`r`nwinget $wArgs > `"$tmpOut`" 2>&1`r`necho %ERRORLEVEL% > `"$tmpDone`""
             [System.IO.File]::WriteAllText($batPath, $batCmd, [System.Text.UTF8Encoding]::new($false))
@@ -85,10 +96,35 @@ function Start-AppsInstallation($toInstall, $winControls, [switch]$isUpgradeAll)
             $lastPos = 0
             $lastProgressUpdate = [DateTime]::MinValue
             $isDownloading = $false
-            $lastProgText = ""
-            $progressAppended = $false
-            $progressStartPos = 0
             $dlTotalBytes = 0
+            $procExitedAt = $null
+            $fallbackWatch = [System.Diagnostics.Stopwatch]::StartNew()
+
+            $readLogChunk = {
+                if (-not (Test-Path $tmpOut)) { return $null }
+                $fs = $null
+                try {
+                    $fs = New-Object System.IO.FileStream($tmpOut, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+                    if ($fs.Length -gt $lastPos) {
+                        $fs.Seek($lastPos, [System.IO.SeekOrigin]::Begin) | Out-Null
+                        $sr = New-Object System.IO.StreamReader($fs, [System.Text.Encoding]::UTF8)
+                        $text = $sr.ReadToEnd()
+                        $lastPos = $fs.Position
+                        $sr.Close()
+                        if ($text) {
+                            $TxtLog.AppendText($text)
+                            $script:currentAppLog += $text
+                            $TxtLog.ScrollToEnd()
+                            try { [Console]::Write($text) } catch { $null = $_ }
+                            return $text
+                        }
+                    }
+                } catch { $null = $_ }
+                finally {
+                    if ($null -ne $fs) { $fs.Dispose() }
+                }
+                return $null
+            }
 
             while (-not (Test-Path $tmpDone)) {
                 if ($global:cancelInstall) {
@@ -96,59 +132,50 @@ function Start-AppsInstallation($toInstall, $winControls, [switch]$isUpgradeAll)
                         try {
                             Start-Process "taskkill.exe" -ArgumentList "/F /T /PID $($procHandle.Id)" -NoNewWindow -Wait -ErrorAction SilentlyContinue
                         } catch { $null = $_ }
+                    } else {
+                        try {
+                            $pattern = if ($isUpgradeAll) { '*upgrade*--all*' } else { "*$($app.Id)*" }
+                            Get-CimInstance Win32_Process -Filter "Name='winget.exe'" -ErrorAction SilentlyContinue |
+                                Where-Object { $_.CommandLine -like $pattern } |
+                                ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+                        } catch { $null = $_ }
                     }
-                    Get-Process -Name "winget" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
                     break
                 }
 
-                if (Test-Path $tmpOut) {
-                    $fs = $null
-                    try {
-                        $fs = New-Object System.IO.FileStream($tmpOut, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
-                        if ($fs.Length -gt $lastPos) {
-                            $fs.Seek($lastPos, [System.IO.SeekOrigin]::Begin) | Out-Null
-                            $sr = New-Object System.IO.StreamReader($fs, [System.Text.Encoding]::UTF8)
-                            $chunk = $sr.ReadToEnd()
-                            $lastPos = $fs.Position
-                            $sr.Close()
+                # Guard against silent runner crash before $tmpDone is written
+                if ($null -ne $procHandle) {
+                    if ($procHandle.HasExited) {
+                        if ($null -eq $procExitedAt) { $procExitedAt = [DateTime]::UtcNow }
+                        elseif (([DateTime]::UtcNow - $procExitedAt).TotalMilliseconds -ge 300) { break }
+                    }
+                } elseif (-not (Test-Path $tmpOut) -and $fallbackWatch.Elapsed.TotalSeconds -ge 15) {
+                    $TxtLog.AppendText("`n[!] Background launcher timed out waiting for output.`n")
+                    $TxtLog.ScrollToEnd()
+                    break
+                }
 
-                            if ($chunk) {
-                                $TxtLog.AppendText($chunk)
-                                $script:currentAppLog += $chunk
-                                $TxtLog.ScrollToEnd()
-                                try { [Console]::Write($chunk) } catch { $null = $_ }
+                $chunk = & $readLogChunk
+                if ($chunk) {
+                    if ($chunk -match "(?i)Downloading\s+(https?://[^\s]+)") {
+                        $isDownloading = $true
+                        $dlTotalBytes = 0
+                    }
 
-                                if ($chunk -match "(?i)Downloading\s+(https?://[^\s]+)") {
-                                    $isDownloading = $true
-                                    $progressAppended = $false
-                                    $lastProgText = ""
-                                    $dlTotalBytes = 0
-                                }
+                    if ($chunk -match "(?i)(\d+(?:\.\d+)?)\s*([KMG]B)\s*/\s*(\d+(?:\.\d+)?)\s*([KMG]B)") {
+                        $LblProgress.Text = "Installing ($count / $($toInstall.Count)): $($app.Name) - $($matches[0])"
+                        $totVal = [double]$matches[3]
+                        $totUnit = $matches[4].ToUpper()
+                        $mult = switch ($totUnit) { "KB" { 1KB } "GB" { 1GB } default { 1MB } }
+                        $dlTotalBytes = [long]($totVal * $mult)
+                    } elseif ($chunk -match "(\d+\s*%)") {
+                        $LblProgress.Text = "Installing ($count / $($toInstall.Count)): $($app.Name) - $($matches[1])"
+                    }
 
-                                if ($chunk -match "(?i)(\d+(?:\.\d+)?)\s*([KMG]B)\s*/\s*(\d+(?:\.\d+)?)\s*([KMG]B)") {
-                                    $LblProgress.Text = "Installing ($count / $($toInstall.Count)): $($app.Name) - $($matches[0])"
-                                    $totVal = [double]$matches[3]
-                                    $totUnit = $matches[4].ToUpper()
-                                    $mult = switch ($totUnit) { "KB" { 1KB } "GB" { 1GB } default { 1MB } }
-                                    $dlTotalBytes = [long]($totVal * $mult)
-                                } elseif ($chunk -match "(\d+\s*%)") {
-                                    $LblProgress.Text = "Installing ($count / $($toInstall.Count)): $($app.Name) - $($matches[1])"
-                                }
-
-                                if ($chunk -match "(?i)(Successfully verified|Starting package install|Успешно проверен|Установка пакета)") {
-                                    if ($isDownloading -and $progressAppended) {
-                                        $TxtLog.AppendText("`n")
-                                        $TxtLog.ScrollToEnd()
-                                    }
-                                    $isDownloading = $false
-                                    $PbInstall.IsIndeterminate = $true
-                                    $LblProgress.Text = if ($isUpgradeAll) { "Running WinGet Upgrade..." } else { "Installing ($count / $($toInstall.Count)): $($app.Name)" }
-                                }
-                            }
-                        }
-                    } catch { $null = $_ }
-                    finally {
-                        if ($null -ne $fs) { $fs.Dispose() }
+                    if ($chunk -match "(?i)(Successfully verified|Starting package install|Успешно проверен|Установка пакета)") {
+                        $isDownloading = $false
+                        $PbInstall.IsIndeterminate = $true
+                        $LblProgress.Text = if ($isUpgradeAll) { "Running WinGet Upgrade..." } else { "Installing ($count / $($toInstall.Count)): $($app.Name)" }
                     }
                 }
 
@@ -178,69 +205,24 @@ function Start-AppsInstallation($toInstall, $winControls, [switch]$isUpgradeAll)
                                 $PbInstall.IsIndeterminate = $false
                                 $PbInstall.Value = $pct
                             }
-
                             $LblProgress.Text = "Installing ($count / $($toInstall.Count)): $($app.Name) - $progStr"
-
-                            if ($progStr -ne $lastProgText) {
-                                $lastProgText = $progStr
-                                $barLen = 20
-                                if ($dlTotalBytes -gt 0) {
-                                    $f = [Math]::Floor(($pct / 100) * $barLen)
-                                    $e = $barLen - $f
-                                    $bar = ("█" * $f) + ("░" * $e)
-                                    $pLine = "  $bar  $progStr"
-                                } else {
-                                    $pLine = "  Downloading: $progStr"
-                                }
-
-                                if (-not $progressAppended) {
-                                    $progressStartPos = $TxtLog.Text.Length
-                                    $TxtLog.AppendText("`n" + $pLine)
-                                    $progressAppended = $true
-                                } else {
-                                    $curTxt = $TxtLog.Text
-                                    if ($curTxt.Length -ge $progressStartPos) {
-                                        $TxtLog.Text = $curTxt.Substring(0, $progressStartPos) + "`n" + $pLine
-                                    }
-                                }
-                                $TxtLog.ScrollToEnd()
-                            }
                         }
                     }
                 }
 
-                DoEvents
+                Invoke-DoEvents
                 Start-Sleep -Milliseconds 50
             }
 
-            # Drain any remaining bytes from the log file
-            if (Test-Path $tmpOut) {
-                $fs = $null
-                try {
-                    $fs = New-Object System.IO.FileStream($tmpOut, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
-                    if ($fs.Length -gt $lastPos) {
-                        $fs.Seek($lastPos, [System.IO.SeekOrigin]::Begin) | Out-Null
-                        $sr = New-Object System.IO.StreamReader($fs, [System.Text.Encoding]::UTF8)
-                        $remText = $sr.ReadToEnd()
-                        $sr.Close()
-                        if ($remText) {
-                            $TxtLog.AppendText($remText)
-                            $script:currentAppLog += $remText
-                            $TxtLog.ScrollToEnd()
-                            try { [Console]::Write($remText) } catch { $null = $_ }
-                        }
-                    }
-                } catch { $null = $_ }
-                finally {
-                    if ($null -ne $fs) { $fs.Dispose() }
-                }
-            }
+            $null = & $readLogChunk
 
             $retCode = -1
             if (Test-Path $tmpDone) {
                 try {
                     $retCode = (Get-Content $tmpDone -Raw).Trim() -as [int]
                 } catch { $null = $_ }
+            } elseif ($null -ne $procHandle -and $procHandle.HasExited) {
+                $retCode = $procHandle.ExitCode
             }
             return $retCode
         }
@@ -272,7 +254,7 @@ function Start-AppsInstallation($toInstall, $winControls, [switch]$isUpgradeAll)
                 if ($app.Name -eq "TeamSpeak 3") {
                     $TxtLog.AppendText("`n[+] Ensuring bundled Overwolf is removed...`n")
                     $TxtLog.ScrollToEnd()
-                    DoEvents
+                    Invoke-DoEvents
                     
                     # 1. Kill background NSIS downloader stub and active Overwolf processes
                     Get-Process -Name "Un_A", "Overwolf*", "OWClient*", "OWLauncher*" -ErrorAction SilentlyContinue | Stop-Process -Force
@@ -293,7 +275,7 @@ function Start-AppsInstallation($toInstall, $winControls, [switch]$isUpgradeAll)
                 if ($app.Name -eq "MSI Afterburner") {
                     $TxtLog.AppendText("`n[+] Removing bundled RivaTuner...`n")
                     $TxtLog.ScrollToEnd()
-                    DoEvents
+                    Invoke-DoEvents
                     Start-Process "winget" -ArgumentList "uninstall --exact --id Guru3D.RTSS --silent --accept-source-agreements" -Wait -NoNewWindow -ErrorAction SilentlyContinue
                 }
             }
@@ -302,7 +284,7 @@ function Start-AppsInstallation($toInstall, $winControls, [switch]$isUpgradeAll)
             $TxtLog.ScrollToEnd()
             $installResults += @{ App = $app; Code = $finalCode; Cancelled = $false; Log = $appLog }
             Write-Host "Finished $($app.Name) with code $finalCode" -ForegroundColor Green
-            DoEvents
+            Invoke-DoEvents
         } else {
             $installResults += @{ App = $app; Code = -1; Cancelled = $true; Log = $appLog }
         }
