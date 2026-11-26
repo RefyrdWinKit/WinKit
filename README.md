@@ -1,6 +1,6 @@
 # WinKit
 
-Minimal Windows 10/11 GUI installer and updater powered by WinGet.
+Minimal Windows 10/11 GUI installer and updater powered by WinGet and Chocolatey.
 
 [English](README.md) | [Русский](README-RU.md)
 
@@ -24,10 +24,11 @@ powershell -ExecutionPolicy Bypass -File winkit.ps1
 
 ## Features
 
+- Switchable package manager backend: **WinGet** or **Chocolatey** (auto-installs Chocolatey on demand)
 - Curated catalog of 42 applications across 7 categories (`src/config/Apps.ps1`)
-- Online WinGet search directly from the search bar (`Enter`)
+- Online WinGet / Chocolatey search directly from the search bar (`Enter`)
 - Background scan for installed apps and available updates
-- One-click `Upgrade All` via `winget upgrade --all`
+- One-click `Upgrade All` via `winget upgrade --all` or `choco upgrade all`
 - Save and load presets in WinGet JSON (`.json`) or plain text (`.txt`)
 - Sequential batch installation with live logs, exportable output, and cancel support
 - Automatic UAC elevation with user-context fallback for user-scoped apps (Discord, Telegram, Spotify, Roblox, Obsidian, Notion)
