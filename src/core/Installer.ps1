@@ -5,6 +5,33 @@ function Test-SafePackageId {
     return (-not [string]::IsNullOrWhiteSpace($Id)) -and ($Id -match '^[a-zA-Z0-9._+\-]+$')
 }
 
+function Get-WinGetExecutable {
+    $cmd = Get-Command "winget.exe" -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+    $winApps = Join-Path $env:LOCALAPPDATA "Microsoft\WindowsApps\winget.exe"
+    if (Test-Path $winApps) {
+        $dir = Split-Path -Parent $winApps
+        if (-not ($env:PATH -like "*$dir*")) { $env:PATH += ";$dir" }
+        return $winApps
+    }
+    return $null
+}
+
+function Install-WinGetClient {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    if (-not (Get-PackageProvider -ListAvailable -Name NuGet -ErrorAction SilentlyContinue)) {
+        Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Confirm:$false | Out-Null
+    }
+    Set-PSRepository -Name "PSGallery" -InstallationPolicy Trusted -ErrorAction SilentlyContinue
+    Install-Module -Name Microsoft.WinGet.Client -Force -Confirm:$false -Scope AllUsers -ErrorAction Stop
+    Import-Module Microsoft.WinGet.Client -Force -ErrorAction Stop
+    if (Get-Command Repair-WinGetPackageManager -ErrorAction SilentlyContinue) {
+        Repair-WinGetPackageManager -Latest -Force -ErrorAction Stop
+    }
+    $env:PATH = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
+    $null = Get-WinGetExecutable
+}
+
 function Get-ChocoExecutable {
     $cmd = Get-Command "choco.exe" -ErrorAction SilentlyContinue
     if ($cmd) { return $cmd.Source }
@@ -53,6 +80,144 @@ function Get-InstallResultStatus {
         return @{ Color = "#107C41"; Text = "Installed successfully"; Desc = "Completed with exit code $Code." }
     }
     return @{ Color = "#E81123"; Text = "Installation failed"; Desc = "Installer returned error code $Code." }
+}
+
+function Show-InstallSummaryCards {
+    param($InstallResults, $WinControls, [string]$Title = "Installation Complete")
+
+    $TxtLog = $WinControls.TxtLog
+    $LblProgressTitle = $WinControls.LblProgressTitle
+    $LblProgress = $WinControls.LblProgress
+    $PbInstall = $WinControls.PbInstall
+    $BtnCancelInstall = $WinControls.BtnCancelInstall
+    $SummaryScroll = $WinControls.SummaryScroll
+    $SummaryPanel = $WinControls.SummaryPanel
+    $BtnExportLog = $WinControls.BtnExportLog
+
+    $TxtLog.Visibility = "Collapsed"
+    $PbInstall.Visibility = "Collapsed"
+    $SummaryScroll.Visibility = "Visible"
+    $LblProgressTitle.Text = $Title
+    $PbInstall.IsIndeterminate = $false
+    $PbInstall.Value = 100
+    $LblProgress.Text = "Finished!"
+
+    foreach ($res in $InstallResults) {
+        $st = Get-InstallResultStatus -Code ([int]$res.Code) -Log ([string]$res.Log) -Cancelled ([bool]$res.Cancelled)
+        $statusColor = $st.Color
+        $statusText = $st.Text
+        $statusDesc = $st.Desc
+
+        $card = New-Object System.Windows.Controls.Border
+        $card.Background = $global:win.Resources["ControlBg"]
+        $card.BorderBrush = $global:win.Resources["BorderClr"]
+        $card.BorderThickness = 1
+        $card.CornerRadius = 6
+        $card.Margin = "0,0,0,10"
+        $card.Padding = "12,10,12,10"
+
+        $cardGrid = New-Object System.Windows.Controls.Grid
+        $col1 = New-Object System.Windows.Controls.ColumnDefinition; $col1.Width = [System.Windows.GridLength]::Auto
+        $col2 = New-Object System.Windows.Controls.ColumnDefinition; $col2.Width = New-Object System.Windows.GridLength(1, [System.Windows.GridUnitType]::Star)
+        $col3 = New-Object System.Windows.Controls.ColumnDefinition; $col3.Width = [System.Windows.GridLength]::Auto
+        $cardGrid.ColumnDefinitions.Add($col1)
+        $cardGrid.ColumnDefinitions.Add($col2)
+        $cardGrid.ColumnDefinitions.Add($col3)
+
+        $rowTop = New-Object System.Windows.Controls.RowDefinition; $rowTop.Height = [System.Windows.GridLength]::Auto
+        $rowBot = New-Object System.Windows.Controls.RowDefinition; $rowBot.Height = [System.Windows.GridLength]::Auto
+        $cardGrid.RowDefinitions.Add($rowTop)
+        $cardGrid.RowDefinitions.Add($rowBot)
+
+        $statusDot = New-Object System.Windows.Shapes.Ellipse
+        $statusDot.Width = 10
+        $statusDot.Height = 10
+        $statusDot.Fill = $global:brushConverter.ConvertFromString($statusColor)
+        $statusDot.VerticalAlignment = "Center"
+        $statusDot.Margin = "4,0,12,0"
+        [System.Windows.Controls.Grid]::SetColumn($statusDot, 0)
+        [System.Windows.Controls.Grid]::SetRow($statusDot, 0)
+        $cardGrid.Children.Add($statusDot) | Out-Null
+
+        $titlePanel = New-Object System.Windows.Controls.StackPanel
+        $titlePanel.Orientation = "Vertical"
+        $titlePanel.VerticalAlignment = "Center"
+        [System.Windows.Controls.Grid]::SetColumn($titlePanel, 1)
+        [System.Windows.Controls.Grid]::SetRow($titlePanel, 0)
+
+        $appName = New-Object System.Windows.Controls.TextBlock
+        $appName.Text = $res.App.Name
+        $appName.FontSize = 14
+        $appName.FontWeight = [System.Windows.FontWeights]::SemiBold
+        $appName.Foreground = $global:win.Resources["AppText"]
+        $titlePanel.Children.Add($appName) | Out-Null
+
+        $appSub = New-Object System.Windows.Controls.TextBlock
+        $appSub.Text = "$statusText - $statusDesc"
+        $appSub.FontSize = 12
+        $appSub.Foreground = $global:brushConverter.ConvertFromString($statusColor)
+        $titlePanel.Children.Add($appSub) | Out-Null
+
+        $cardGrid.Children.Add($titlePanel) | Out-Null
+
+        $logContainer = New-Object System.Windows.Controls.Border
+        $logContainer.Background = $global:brushConverter.ConvertFromString("#181818")
+        $logContainer.BorderThickness = 0
+        $logContainer.CornerRadius = 4
+        $logContainer.Margin = "0,10,0,0"
+        $logContainer.Padding = "8"
+        $logContainer.Visibility = "Collapsed"
+        [System.Windows.Controls.Grid]::SetColumn($logContainer, 0)
+        [System.Windows.Controls.Grid]::SetColumnSpan($logContainer, 3)
+        [System.Windows.Controls.Grid]::SetRow($logContainer, 1)
+
+        $logBox = New-Object System.Windows.Controls.TextBox
+        $logBox.Text = if ($res.Log) { $res.Log } else { "No output captured." }
+        $logBox.Background = [System.Windows.Media.Brushes]::Transparent
+        $logBox.Foreground = $global:brushConverter.ConvertFromString("#AAAAAA")
+        $logBox.FontFamily = "Consolas"
+        $logBox.FontSize = 11
+        $logBox.IsReadOnly = $true
+        $logBox.TextWrapping = "Wrap"
+        $logBox.BorderThickness = 0
+        $logBox.MaxHeight = 150
+        $logBox.VerticalScrollBarVisibility = "Auto"
+        $logContainer.Child = $logBox
+
+        $cardGrid.Children.Add($logContainer) | Out-Null
+
+        $btnLog = New-Object System.Windows.Controls.Button
+        $btnLog.Content = "Show Log"
+        $btnLog.FontSize = 11
+        $btnLog.Padding = "10,4,10,4"
+        $btnLog.Height = 26
+        $btnLog.VerticalAlignment = "Center"
+        $btnLog.Tag = $logContainer
+        [System.Windows.Controls.Grid]::SetColumn($btnLog, 2)
+        [System.Windows.Controls.Grid]::SetRow($btnLog, 0)
+
+        $btnLog.Add_Click({
+            $target = $this.Tag
+            if ($null -ne $target) {
+                if ($target.Visibility -eq "Visible") {
+                    $target.Visibility = "Collapsed"
+                    $this.Content = "Show Log"
+                } else {
+                    $target.Visibility = "Visible"
+                    $this.Content = "Hide Log"
+                }
+            }
+        })
+
+        $cardGrid.Children.Add($btnLog) | Out-Null
+        $card.Child = $cardGrid
+        $SummaryPanel.Children.Add($card) | Out-Null
+    }
+
+    $global:isInstallFinished = $true
+    $BtnCancelInstall.Content = "Close"
+    $BtnCancelInstall.IsEnabled = $true
+    if ($BtnExportLog) { $BtnExportLog.Visibility = "Visible" }
 }
 
 function Start-AppsInstallation($toInstall, $winControls, [switch]$isUpgradeAll, [string]$Provider = 'winget') {
@@ -364,141 +529,14 @@ function Start-AppsInstallation($toInstall, $winControls, [switch]$isUpgradeAll,
         }
     }
 
-    $TxtLog.Visibility = "Collapsed"
-    $PbInstall.Visibility = "Collapsed"
-    $SummaryScroll.Visibility = "Visible"
-
-    if ($global:cancelInstall) {
-        $LblProgressTitle.Text = "Installation Aborted"
+    $summaryTitle = if ($global:cancelInstall) {
+        "Installation Aborted"
+    } elseif ($isUpgradeAll) {
+        "Upgrade Complete"
     } else {
-        $LblProgressTitle.Text = if ($isUpgradeAll) { "Upgrade Complete" } else { "Installation Complete" }
+        "Installation Complete"
     }
-    
-    $PbInstall.IsIndeterminate = $false
-    $PbInstall.Value = 100
-    $LblProgress.Text = "Finished!"
-
-    foreach ($res in $installResults) {
-        $st = Get-InstallResultStatus -Code ([int]$res.Code) -Log ([string]$res.Log) -Cancelled ([bool]$res.Cancelled)
-        $statusColor = $st.Color
-        $statusText = $st.Text
-        $statusDesc = $st.Desc
-
-        # Build Card Container
-        $card = New-Object System.Windows.Controls.Border
-        $card.Background = $global:win.Resources["ControlBg"]
-        $card.BorderBrush = $global:win.Resources["BorderClr"]
-        $card.BorderThickness = 1
-        $card.CornerRadius = 6
-        $card.Margin = "0,0,0,10"
-        $card.Padding = "12,10,12,10"
-
-        $cardGrid = New-Object System.Windows.Controls.Grid
-        $col1 = New-Object System.Windows.Controls.ColumnDefinition; $col1.Width = [System.Windows.GridLength]::Auto
-        $col2 = New-Object System.Windows.Controls.ColumnDefinition; $col2.Width = New-Object System.Windows.GridLength(1, [System.Windows.GridUnitType]::Star)
-        $col3 = New-Object System.Windows.Controls.ColumnDefinition; $col3.Width = [System.Windows.GridLength]::Auto
-        $cardGrid.ColumnDefinitions.Add($col1)
-        $cardGrid.ColumnDefinitions.Add($col2)
-        $cardGrid.ColumnDefinitions.Add($col3)
-
-        $rowTop = New-Object System.Windows.Controls.RowDefinition; $rowTop.Height = [System.Windows.GridLength]::Auto
-        $rowBot = New-Object System.Windows.Controls.RowDefinition; $rowBot.Height = [System.Windows.GridLength]::Auto
-        $cardGrid.RowDefinitions.Add($rowTop)
-        $cardGrid.RowDefinitions.Add($rowBot)
-
-        # Status Circle Indicator
-        $statusDot = New-Object System.Windows.Shapes.Ellipse
-        $statusDot.Width = 10
-        $statusDot.Height = 10
-        $statusDot.Fill = $global:brushConverter.ConvertFromString($statusColor)
-        $statusDot.VerticalAlignment = "Center"
-        $statusDot.Margin = "4,0,12,0"
-        [System.Windows.Controls.Grid]::SetColumn($statusDot, 0)
-        [System.Windows.Controls.Grid]::SetRow($statusDot, 0)
-        $cardGrid.Children.Add($statusDot) | Out-Null
-
-        # App Info (Name & Status Description)
-        $titlePanel = New-Object System.Windows.Controls.StackPanel
-        $titlePanel.Orientation = "Vertical"
-        $titlePanel.VerticalAlignment = "Center"
-        [System.Windows.Controls.Grid]::SetColumn($titlePanel, 1)
-        [System.Windows.Controls.Grid]::SetRow($titlePanel, 0)
-
-        $appName = New-Object System.Windows.Controls.TextBlock
-        $appName.Text = $res.App.Name
-        $appName.FontSize = 14
-        $appName.FontWeight = [System.Windows.FontWeights]::SemiBold
-        $appName.Foreground = $global:win.Resources["AppText"]
-        $titlePanel.Children.Add($appName) | Out-Null
-
-        $appSub = New-Object System.Windows.Controls.TextBlock
-        $appSub.Text = "$statusText - $statusDesc"
-        $appSub.FontSize = 12
-        $appSub.Foreground = $global:brushConverter.ConvertFromString($statusColor)
-        $titlePanel.Children.Add($appSub) | Out-Null
-
-        $cardGrid.Children.Add($titlePanel) | Out-Null
-
-        # Detailed Log Dropdown Panel
-        $logContainer = New-Object System.Windows.Controls.Border
-        $logContainer.Background = $global:brushConverter.ConvertFromString("#181818")
-        $logContainer.BorderThickness = 0
-        $logContainer.CornerRadius = 4
-        $logContainer.Margin = "0,10,0,0"
-        $logContainer.Padding = "8"
-        $logContainer.Visibility = "Collapsed"
-        [System.Windows.Controls.Grid]::SetColumn($logContainer, 0)
-        [System.Windows.Controls.Grid]::SetColumnSpan($logContainer, 3)
-        [System.Windows.Controls.Grid]::SetRow($logContainer, 1)
-
-        $logBox = New-Object System.Windows.Controls.TextBox
-        $logBox.Text = if ($res.Log) { $res.Log } else { "No output captured." }
-        $logBox.Background = [System.Windows.Media.Brushes]::Transparent
-        $logBox.Foreground = $global:brushConverter.ConvertFromString("#AAAAAA")
-        $logBox.FontFamily = "Consolas"
-        $logBox.FontSize = 11
-        $logBox.IsReadOnly = $true
-        $logBox.TextWrapping = "Wrap"
-        $logBox.BorderThickness = 0
-        $logBox.MaxHeight = 150
-        $logBox.VerticalScrollBarVisibility = "Auto"
-        $logContainer.Child = $logBox
-
-        $cardGrid.Children.Add($logContainer) | Out-Null
-
-        # Show / Hide Log Button
-        $btnLog = New-Object System.Windows.Controls.Button
-        $btnLog.Content = "Show Log"
-        $btnLog.FontSize = 11
-        $btnLog.Padding = "10,4,10,4"
-        $btnLog.Height = 26
-        $btnLog.VerticalAlignment = "Center"
-        $btnLog.Tag = $logContainer
-        [System.Windows.Controls.Grid]::SetColumn($btnLog, 2)
-        [System.Windows.Controls.Grid]::SetRow($btnLog, 0)
-
-        $btnLog.Add_Click({
-            $target = $this.Tag
-            if ($null -ne $target) {
-                if ($target.Visibility -eq "Visible") {
-                    $target.Visibility = "Collapsed"
-                    $this.Content = "Show Log"
-                } else {
-                    $target.Visibility = "Visible"
-                    $this.Content = "Hide Log"
-                }
-            }
-        })
-
-        $cardGrid.Children.Add($btnLog) | Out-Null
-        $card.Child = $cardGrid
-        $SummaryPanel.Children.Add($card) | Out-Null
-    }
-
-    $global:isInstallFinished = $true
-    $BtnCancelInstall.Content = "Close"
-    $BtnCancelInstall.IsEnabled = $true
-    if ($BtnExportLog) { $BtnExportLog.Visibility = "Visible" }
+    Show-InstallSummaryCards -InstallResults $installResults -WinControls $winControls -Title $summaryTitle
 }
 
 

@@ -100,6 +100,11 @@
             </Setter>
         </Style>
 
+        <Style TargetType="Button" x:Key="PillButton" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+        </Style>
+
         <Style TargetType="Button" x:Key="PrimaryButton" BasedOn="{StaticResource {x:Type Button}}">
             <Setter Property="Background" Value="{DynamicResource PrimaryClr}"/>
             <Setter Property="Foreground" Value="{DynamicResource PrimaryBtnTextClr}"/>
@@ -176,8 +181,8 @@
                     <!-- Package Manager Switcher -->
                     <Border Height="34" Background="{DynamicResource ControlBg}" BorderBrush="{DynamicResource BorderClr}" BorderThickness="1" CornerRadius="6" Padding="2" Margin="0,0,10,0">
                         <StackPanel Orientation="Horizontal">
-                            <Button Name="BtnBackendWinget" Content="WinGet" Height="28" Padding="10,0" BorderThickness="0" FontSize="12" FontWeight="SemiBold" ToolTip="Use WinGet package manager"/>
-                            <Button Name="BtnBackendChoco" Content="Choco" Height="28" Padding="10,0" BorderThickness="0" Background="Transparent" FontSize="12" ToolTip="Use Chocolatey package manager"/>
+                            <Button Name="BtnBackendWinget" Content="WinGet" Style="{StaticResource PrimaryButton}" Height="28" Padding="10,0" FontSize="12" FontWeight="SemiBold" ToolTip="Use WinGet package manager"/>
+                            <Button Name="BtnBackendChoco" Content="Choco" Style="{StaticResource PillButton}" Height="28" Padding="10,0" FontSize="12" ToolTip="Use Chocolatey package manager"/>
                         </StackPanel>
                     </Border>
 

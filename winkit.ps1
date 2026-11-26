@@ -17,41 +17,6 @@ if (-not $global:isAdmin -or -not $isSTA) {
 $Host.UI.RawUI.WindowTitle = "WinKit - Backend Service"
 Write-Host "WinKit GUI Initialization..." -ForegroundColor Cyan
 
-# Ensure WinGet is present (auto-download via Microsoft.WinGet.Client on stripped OS builds)
-function Assert-WinGet {
-    $hasWinget = [bool](Get-Command "winget.exe" -ErrorAction SilentlyContinue)
-    $winApps = "$env:LOCALAPPDATA\Microsoft\WindowsApps"
-    if (-not $hasWinget -and (Test-Path "$winApps\winget.exe")) {
-        $env:PATH += ";$winApps"
-        $hasWinget = [bool](Get-Command "winget.exe" -ErrorAction SilentlyContinue)
-    }
-
-    if (-not $hasWinget) {
-        Write-Host "[!] WinGet was not detected on this system." -ForegroundColor Yellow
-        Write-Host "[*] Bootstrapping WinGet via Microsoft.WinGet.Client..." -ForegroundColor Cyan
-        try {
-            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-            if (-not (Get-PackageProvider -ListAvailable -Name NuGet -ErrorAction SilentlyContinue)) {
-                Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Confirm:$false | Out-Null
-            }
-            Set-PSRepository -Name "PSGallery" -InstallationPolicy Trusted -ErrorAction SilentlyContinue
-            Install-Module -Name Microsoft.WinGet.Client -Force -Confirm:$false -Scope AllUsers -ErrorAction Stop
-            Import-Module Microsoft.WinGet.Client -Force -ErrorAction Stop
-            if (Get-Command Repair-WinGetPackageManager -ErrorAction SilentlyContinue) {
-                Repair-WinGetPackageManager -Latest -Force -ErrorAction Stop
-            }
-            $env:PATH = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
-            if (Test-Path "$winApps\winget.exe") { $env:PATH += ";$winApps" }
-            Write-Host "[+] WinGet successfully installed!" -ForegroundColor Green
-        } catch {
-            Write-Warning "Could not automatically install WinGet: $_"
-            Write-Host "Please ensure internet access and PowerShell Gallery availability." -ForegroundColor Yellow
-        }
-    }
-}
-
-Assert-WinGet
-
 # Hide Console Window while GUI is active
 Add-Type -Name Window -Namespace Console -MemberDefinition '[DllImport("Kernel32.dll")]public static extern IntPtr GetConsoleWindow();[DllImport("user32.dll")]public static extern bool ShowWindow(IntPtr hWnd, Int32 nCmdShow);' -ErrorAction Ignore
 [Console.Window]::ShowWindow([Console.Window]::GetConsoleWindow(), 0) | Out-Null
@@ -100,6 +65,7 @@ try {
         BtnExportLog         = $global:win.FindName("BtnExportLog")
         SearchResultsView    = $global:win.FindName("SearchResultsView")
         SearchResultsWrap    = $global:win.FindName("SearchResultsWrap")
+        LblSearchResultTitle = $global:win.FindName("LblSearchResultTitle")
         LblSearchResultStatus= $global:win.FindName("LblSearchResultStatus")
         BtnBackToCats        = $global:win.FindName("BtnBackToCats")
         PbSearchLoading      = $global:win.FindName("PbSearchLoading")

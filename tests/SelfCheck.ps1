@@ -125,14 +125,24 @@ $testControls = @{
 . (Join-Path $root 'src\core\Theme.ps1')
 Initialize-UIController $testControls
 Assert-True ($testControls.TxtSearchPlaceholder.Text -like '*WinGet*') 'Default search placeholder should mention WinGet'
+Assert-True ($testControls.LblSearchResultTitle.Text -eq 'WinGet Search Results') 'Default search title should mention WinGet'
+Assert-True ($testControls.BtnBackendWinget.Style -eq $global:win.Resources['PrimaryButton']) 'WinGet button should use PrimaryButton style when active'
+Assert-True ($testControls.BtnBackendChoco.Style -eq $global:win.Resources['PillButton']) 'Choco button should use PillButton style when inactive'
 $script:pkgProvider = 'choco'
 Update-ProviderUI
 Assert-True ($testControls.TxtSearchPlaceholder.Text -like '*Chocolatey*') 'Choco search placeholder should mention Chocolatey'
+Assert-True ($testControls.LblSearchResultTitle.Text -eq 'Chocolatey Search Results') 'Choco search title should update to Chocolatey'
+Assert-True ($testControls.BtnBackendChoco.Style -eq $global:win.Resources['PrimaryButton']) 'Choco button should use PrimaryButton style when active'
+Assert-True ($testControls.BtnBackendWinget.Style -eq $global:win.Resources['PillButton']) 'WinGet button should use PillButton style when inactive'
 $robloxChk = $script:checkBoxes | Where-Object { $_.Uid -eq 'Roblox' } | Select-Object -First 1
 Assert-True (-not $robloxChk.IsEnabled) 'Apps without ChocoId must be disabled in Chocolatey mode'
 $script:pkgProvider = 'winget'
 Update-ProviderUI
 Assert-True ($robloxChk.IsEnabled) 'Apps without ChocoId must re-enable in WinGet mode'
+
+# Verify Show-InstallSummaryCards renders a summary card properly
+Show-InstallSummaryCards -InstallResults @(@{ App = @{ Name = 'Chocolatey' }; Code = 0; Cancelled = $false; Log = 'OK' }) -WinControls $testControls -Title 'Chocolatey Setup'
+Assert-True ($testControls.SummaryScroll.Visibility -eq 'Visible' -and $testControls.PbInstall.Visibility -eq 'Collapsed' -and $testControls.SummaryPanel.Children.Count -eq 1) 'Summary card must render and hide progress bar'
 $testControls.TxtSearch.Text = '[chrome'
 $testControls.TxtSearch.Text = ''
 Assert-True ($testControls.BtnInstall.Content -eq 'Install') 'Install button count should reset cleanly'

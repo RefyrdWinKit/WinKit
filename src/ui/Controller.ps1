@@ -210,15 +210,14 @@ function Initialize-UIController($winControls) {
         $isChoco = ($script:pkgProvider -eq 'choco')
         if ($script:btnBackendWinget -and $script:btnBackendChoco) {
             $primaryStyle = $script:win.Resources["PrimaryButton"]
+            $pillStyle = $script:win.Resources["PillButton"]
             if ($isChoco) {
-                $script:btnBackendWinget.Style = $null
-                $script:btnBackendWinget.Background = [System.Windows.Media.Brushes]::Transparent
+                $script:btnBackendWinget.Style = $pillStyle
                 $script:btnBackendWinget.FontWeight = [System.Windows.FontWeights]::Normal
                 $script:btnBackendChoco.Style = $primaryStyle
                 $script:btnBackendChoco.FontWeight = [System.Windows.FontWeights]::SemiBold
             } else {
-                $script:btnBackendChoco.Style = $null
-                $script:btnBackendChoco.Background = [System.Windows.Media.Brushes]::Transparent
+                $script:btnBackendChoco.Style = $pillStyle
                 $script:btnBackendChoco.FontWeight = [System.Windows.FontWeights]::Normal
                 $script:btnBackendWinget.Style = $primaryStyle
                 $script:btnBackendWinget.FontWeight = [System.Windows.FontWeights]::SemiBold
@@ -245,48 +244,74 @@ function Initialize-UIController($winControls) {
         Update-InstallCount
     }
 
-    function script:Ensure-ChocoReady {
-        if (Get-ChocoExecutable) { return $true }
-        $ans = [System.Windows.MessageBox]::Show(
-            "Chocolatey is not installed on this PC.`nInstall Chocolatey now?",
-            "WinKit - Chocolatey",
-            4, 32
+    function script:Ensure-ProviderReady {
+        param(
+            [string]$Provider = $script:pkgProvider,
+            [switch]$PromptIfMissing,
+            [switch]$ContinueOnSuccess
         )
-        if ($ans -ne [System.Windows.MessageBoxResult]::Yes) { return $false }
+
+        $isChoco = ($Provider -eq 'choco')
+        $existing = if ($isChoco) { Get-ChocoExecutable } else { Get-WinGetExecutable }
+        if ($existing) { return $true }
+
+        $provLabel = if ($isChoco) { "Chocolatey" } else { "WinGet" }
+        if ($PromptIfMissing) {
+            $ans = [System.Windows.MessageBox]::Show(
+                "$provLabel is not installed on this PC.`nInstall $provLabel now?",
+                "WinKit - $provLabel",
+                4, 32
+            )
+            if ($ans -ne [System.Windows.MessageBoxResult]::Yes) { return $false }
+        }
 
         Open-ProgressOverlay
-        $script:winControls.LblProgressTitle.Text = "Installing Chocolatey..."
-        $script:winControls.LblProgress.Text = "Downloading and installing Chocolatey..."
+        $script:winControls.LblProgressTitle.Text = "Installing $provLabel..."
+        $script:winControls.LblProgress.Text = "Downloading and installing $provLabel..."
         $script:winControls.PbInstall.IsIndeterminate = $true
-        $script:TxtLog.AppendText("---> Installing Chocolatey via community.chocolatey.org...`n")
+        $script:TxtLog.AppendText("---> Installing $provLabel...`n")
         Invoke-DoEvents
 
+        $setupLog = $script:TxtLog.Text
+        $ok = $false
         try {
-            $out = Install-ChocolateyClient 2>&1 | Out-String
-            if ($out) { $script:TxtLog.AppendText($out) }
-            $ok = [bool](Get-ChocoExecutable)
-            $script:TxtLog.AppendText("`n---> Chocolatey setup $(if ($ok) { 'completed' } else { 'failed' }).`n")
-            $script:winControls.LblProgress.Text = if ($ok) { "Chocolatey installed!" } else { "Installation failed." }
-            $global:isInstallFinished = $true
-            $script:btnCancelInstall.Content = "Close"
-            $script:btnCancelInstall.IsEnabled = $true
-            return $ok
+            if ($isChoco) {
+                $out = Install-ChocolateyClient *>&1 | Out-String
+            } else {
+                $out = Install-WinGetClient *>&1 | Out-String
+            }
+            if ($out) {
+                $script:TxtLog.AppendText($out)
+                $setupLog += $out
+            }
+            $ok = [bool](if ($isChoco) { Get-ChocoExecutable } else { Get-WinGetExecutable })
         } catch {
-            $script:TxtLog.AppendText("`n[!] Chocolatey installation failed: $_`n")
-            $global:isInstallFinished = $true
-            $script:btnCancelInstall.Content = "Close"
-            $script:btnCancelInstall.IsEnabled = $true
-            return $false
-        } finally {
-            if ($script:btnInstall) { $script:btnInstall.IsEnabled = $true }
-            if ($script:btnUpgradeAll) { $script:btnUpgradeAll.IsEnabled = $true }
+            $errLine = "`n[!] $provLabel installation failed: $_`n"
+            $script:TxtLog.AppendText($errLine)
+            $setupLog += $errLine
+            $ok = $false
         }
+
+        if ($ok -and $ContinueOnSuccess) {
+            return $true
+        }
+
+        $resCard = @(@{
+            App       = @{ Name = $provLabel }
+            Code      = $(if ($ok) { 0 } else { -1 })
+            Cancelled = $false
+            Log       = $setupLog
+        })
+        Show-InstallSummaryCards -InstallResults $resCard -WinControls $script:winControls -Title "$provLabel Setup"
+        if ($script:btnInstall) { $script:btnInstall.IsEnabled = $true }
+        if ($script:btnUpgradeAll) { $script:btnUpgradeAll.IsEnabled = $true }
+        return $ok
     }
 
     function script:Set-PackageProvider {
         param([string]$Provider)
         if ($Provider -eq $script:pkgProvider) { return }
-        if ($Provider -eq 'choco' -and -not (Ensure-ChocoReady)) { return }
+        if ($Provider -eq 'choco' -and -not (Ensure-ProviderReady -Provider 'choco' -PromptIfMissing)) { return }
 
         $script:pkgProvider = $Provider
         Clear-OnlineSearchResults
@@ -423,11 +448,14 @@ function Initialize-UIController($winControls) {
             return
         }
 
+        $wingetExe = Get-WinGetExecutable
+        if (-not $wingetExe) { return }
         $worker = {
+            param([string]$exe)
             [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-            winget list --source winget --accept-source-agreements 2>$null
+            & $exe list --source winget --accept-source-agreements 2>$null
         }
-        Start-BackgroundTask -Worker $worker -Context @{ Provider = 'winget' } -OnComplete {
+        Start-BackgroundTask -Worker $worker -Arguments @($wingetExe) -Context @{ Provider = 'winget' } -OnComplete {
             param($lines, $err, $ctx)
             if ($err -or -not $lines -or $ctx.Provider -ne $script:pkgProvider) { return }
             $installed = @{}
@@ -581,11 +609,8 @@ function Initialize-UIController($winControls) {
 
         $prov = $script:pkgProvider
         $provLabel = if ($prov -eq 'choco') { 'Chocolatey' } else { 'WinGet' }
-        $chocoExe = $null
-        if ($prov -eq 'choco') {
-            if (-not (Ensure-ChocoReady)) { return }
-            $chocoExe = Get-ChocoExecutable
-        }
+        if (-not (Ensure-ProviderReady -Provider $prov -PromptIfMissing)) { return }
+        $cliExe = if ($prov -eq 'choco') { Get-ChocoExecutable } else { Get-WinGetExecutable }
 
         $script:searchSeq++
         $seq = $script:searchSeq
@@ -604,14 +629,14 @@ function Initialize-UIController($winControls) {
                 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
                 & $exe search $searchTerm -r --page-size=25 2>$null
             }
-            $workerArgs = @($q, $chocoExe)
+            $workerArgs = @($q, $cliExe)
         } else {
             $worker = {
-                param([string]$searchTerm)
+                param([string]$searchTerm, [string]$exe)
                 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-                winget search --query $searchTerm --source winget --accept-source-agreements --count 25 2>$null
+                & $exe search --query $searchTerm --source winget --accept-source-agreements --count 25 2>$null
             }
-            $workerArgs = @($q)
+            $workerArgs = @($q, $cliExe)
         }
 
         Start-BackgroundTask -Worker $worker -Arguments $workerArgs -Context @{ Seq = $seq; Query = $q; Provider = $prov; Label = $provLabel } -OnComplete {
@@ -834,8 +859,8 @@ function Initialize-UIController($winControls) {
     if ($script:btnUpgradeAll) {
         $script:btnUpgradeAll.Add_Click({
             $prov = $script:pkgProvider
-            if ($prov -eq 'choco' -and -not (Ensure-ChocoReady)) { return }
-            Open-ProgressOverlay
+            if (-not (Ensure-ProviderReady -Provider $prov -ContinueOnSuccess)) { return }
+            if ($script:ProgressOverlay.Visibility -ne "Visible") { Open-ProgressOverlay }
             try {
                 Start-SystemUpgrade $script:winControls -Provider $prov
             } finally {
@@ -977,10 +1002,10 @@ function Initialize-UIController($winControls) {
         $toInstall = @(Get-SelectedApps)
         if ($toInstall.Count -eq 0) { return }
         $prov = $script:pkgProvider
-        if ($prov -eq 'choco' -and -not (Ensure-ChocoReady)) { return }
+        if (-not (Ensure-ProviderReady -Provider $prov -ContinueOnSuccess)) { return }
         Write-Host "Install button clicked ($prov). Selected apps: $($toInstall.Count)" -ForegroundColor Cyan
 
-        Open-ProgressOverlay
+        if ($script:ProgressOverlay.Visibility -ne "Visible") { Open-ProgressOverlay }
         try {
             Start-AppsInstallation $toInstall $script:winControls -Provider $prov
         } finally {
