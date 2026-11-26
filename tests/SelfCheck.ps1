@@ -66,9 +66,9 @@ $chocoList = @(
     '7zip|24.08'
     '2 packages installed.'
 )
-$parsedChoco = @(ConvertFrom-ChocoLines -Lines $chocoList)
+$parsedChoco = @(ConvertFrom-ChocoOutput -Lines $chocoList)
 Assert-True ($parsedChoco.Count -eq 2 -and $parsedChoco[0].Id -eq 'git' -and $parsedChoco[1].Version -eq '24.08') 'Chocolatey list -r should parse cleanly'
-$parsedChocoOut = @(ConvertFrom-ChocoLines -Lines @('7zip|24.08|24.09|false') -Outdated)
+$parsedChocoOut = @(ConvertFrom-ChocoOutput -Lines @('7zip|24.08|24.09|false') -Outdated)
 Assert-True ($parsedChocoOut.Count -eq 1 -and $parsedChocoOut[0].Available -eq '24.09') 'Chocolatey outdated -r should parse available version'
 
 # 5. Validate Get-InstallResultStatus classification
@@ -93,11 +93,11 @@ $tmpTxt = Join-Path $env:TEMP "winkit_test_preset_$PID.txt"
 try {
     $jsonOut = ConvertTo-WinKitPresetJson -PackageIds @('Git.Git', 'Mozilla.Thunderbird')
     [System.IO.File]::WriteAllText($tmpJson, $jsonOut, [System.Text.UTF8Encoding]::new($false))
-    $loadedJson = @(Import-WinKitPresetIds -Path $tmpJson)
+    $loadedJson = @(Import-WinKitPreset -Path $tmpJson)
     Assert-True ($loadedJson.Count -eq 2 -and $loadedJson[0] -eq 'Git.Git' -and $loadedJson[1] -eq 'Mozilla.Thunderbird') 'JSON preset round-trip failed'
 
     [System.IO.File]::WriteAllText($tmpTxt, "Git.Git`n`n7zip.7zip`n", [System.Text.UTF8Encoding]::new($false))
-    $loadedTxt = @(Import-WinKitPresetIds -Path $tmpTxt)
+    $loadedTxt = @(Import-WinKitPreset -Path $tmpTxt)
     Assert-True ($loadedTxt.Count -eq 2 -and $loadedTxt[1] -eq '7zip.7zip') 'TXT preset round-trip failed'
 } finally {
     Remove-Item $tmpJson, $tmpTxt -Force -ErrorAction SilentlyContinue

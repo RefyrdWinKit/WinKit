@@ -1,6 +1,6 @@
 ﻿# --- WinKit UI Controller & Event Handlers ---
 
-function Invoke-DoEvents {
+function Invoke-UiPump {
     $frame = New-Object System.Windows.Threading.DispatcherFrame
     [System.Windows.Threading.Dispatcher]::CurrentDispatcher.BeginInvoke(
         [System.Windows.Threading.DispatcherPriority]::Background,
@@ -73,7 +73,7 @@ function ConvertFrom-WingetTable {
     return $results
 }
 
-function ConvertFrom-ChocoLines {
+function ConvertFrom-ChocoOutput {
     param([string[]]$Lines, [switch]$Outdated)
 
     $results = @()
@@ -119,7 +119,7 @@ function ConvertTo-WinKitPresetJson {
     return ($exportObj | ConvertTo-Json -Depth 5)
 }
 
-function Import-WinKitPresetIds {
+function Import-WinKitPreset {
     param([string]$Path)
 
     if ($Path.EndsWith(".json", [System.StringComparison]::OrdinalIgnoreCase)) {
@@ -180,7 +180,7 @@ function Initialize-UIController($winControls) {
     $script:searchSeq = 0
     $global:depCheckBoxes = @{}
 
-    function script:Get-SelectedApps {
+    function script:Get-SelectedApp {
         $selected = @()
         $seenIds = @{}
         foreach ($chk in ($script:checkBoxes + $script:onlineCheckBoxes)) {
@@ -198,7 +198,7 @@ function Initialize-UIController($winControls) {
     }
 
     function script:Update-InstallCount {
-        $count = @(Get-SelectedApps).Count
+        $count = @(Get-SelectedApp).Count
         if ($count -gt 0) {
             $script:btnInstall.Content = "Install ($count)"
         } else {
@@ -244,7 +244,7 @@ function Initialize-UIController($winControls) {
         Update-InstallCount
     }
 
-    function script:Ensure-ProviderReady {
+    function script:Initialize-Provider {
         param(
             [string]$Provider = $script:pkgProvider,
             [switch]$PromptIfMissing,
@@ -270,7 +270,7 @@ function Initialize-UIController($winControls) {
         $script:winControls.LblProgress.Text = "Downloading and installing $provLabel..."
         $script:winControls.PbInstall.IsIndeterminate = $true
         $script:TxtLog.AppendText("---> Installing $provLabel...`n")
-        Invoke-DoEvents
+        Invoke-UiPump
 
         $setupLog = $script:TxtLog.Text
         $ok = $false
@@ -311,10 +311,10 @@ function Initialize-UIController($winControls) {
     function script:Set-PackageProvider {
         param([string]$Provider)
         if ($Provider -eq $script:pkgProvider) { return }
-        if ($Provider -eq 'choco' -and -not (Ensure-ProviderReady -Provider 'choco' -PromptIfMissing)) { return }
+        if ($Provider -eq 'choco' -and -not (Initialize-Provider -Provider 'choco' -PromptIfMissing)) { return }
 
         $script:pkgProvider = $Provider
-        Clear-OnlineSearchResults
+        Clear-OnlineSearchResult
         Show-CategoryView
         $script:installedPackages = @{}
         Update-AppInstalledBadge
@@ -389,11 +389,11 @@ function Initialize-UIController($winControls) {
             $timer.Interval = [TimeSpan]::FromMilliseconds(150)
             $timer.Tag = @{ Ps = $ps; Runspace = $runspace; Async = $asyncResult; Context = $Context; OnComplete = $OnComplete }
             $timer.Add_Tick({
-                param($sender, $e)
+                param($timerSrc, $e)
                 $null = $e
-                $state = $sender.Tag
+                $state = $timerSrc.Tag
                 if ($state.Async.IsCompleted) {
-                    $sender.Stop()
+                    $timerSrc.Stop()
                     $res = $null
                     $err = $null
                     try {
@@ -432,10 +432,10 @@ function Initialize-UIController($winControls) {
                 if ($err -or -not $res -or $ctx.Provider -ne $script:pkgProvider) { return }
                 $data = $res | Select-Object -First 1
                 $installed = [hashtable]::new([System.StringComparer]::OrdinalIgnoreCase)
-                foreach ($item in @(ConvertFrom-ChocoLines -Lines $data.List)) {
+                foreach ($item in @(ConvertFrom-ChocoOutput -Lines $data.List)) {
                     $installed[$item.Id] = @{ Version = $item.Version; Available = "" }
                 }
-                foreach ($upd in @(ConvertFrom-ChocoLines -Lines $data.Outdated -Outdated)) {
+                foreach ($upd in @(ConvertFrom-ChocoOutput -Lines $data.Outdated -Outdated)) {
                     if ($installed.ContainsKey($upd.Id)) {
                         $installed[$upd.Id].Available = $upd.Available
                     } else {
@@ -531,7 +531,7 @@ function Initialize-UIController($winControls) {
         $script:tabCats.Items.Add($tabItem) | Out-Null
     }
 
-    function script:Clear-OnlineSearchResults {
+    function script:Clear-OnlineSearchResult {
         if ($script:searchResultsWrap) { $script:searchResultsWrap.Children.Clear() }
         $script:onlineCheckBoxes = @()
         Update-InstallCount
@@ -609,7 +609,7 @@ function Initialize-UIController($winControls) {
 
         $prov = $script:pkgProvider
         $provLabel = if ($prov -eq 'choco') { 'Chocolatey' } else { 'WinGet' }
-        if (-not (Ensure-ProviderReady -Provider $prov -PromptIfMissing)) { return }
+        if (-not (Initialize-Provider -Provider $prov -PromptIfMissing)) { return }
         $cliExe = if ($prov -eq 'choco') { Get-ChocoExecutable } else { Get-WinGetExecutable }
 
         $script:searchSeq++
@@ -621,7 +621,7 @@ function Initialize-UIController($winControls) {
             $script:lblSearchResultStatus.Opacity = 1.0
         }
         if ($script:pbSearchLoading) { $script:pbSearchLoading.Visibility = "Visible" }
-        Clear-OnlineSearchResults
+        Clear-OnlineSearchResult
 
         if ($prov -eq 'choco') {
             $worker = {
@@ -653,11 +653,11 @@ function Initialize-UIController($winControls) {
             }
 
             $foundApps = if ($ctx.Provider -eq 'choco') {
-                @(ConvertFrom-ChocoLines -Lines $lines)
+                @(ConvertFrom-ChocoOutput -Lines $lines)
             } else {
                 @(ConvertFrom-WingetTable -Lines $lines)
             }
-            Clear-OnlineSearchResults
+            Clear-OnlineSearchResult
             if ($foundApps.Count -eq 0) {
                 if ($script:lblSearchResultStatus) {
                     $script:lblSearchResultStatus.Text = "No packages found for `"$($ctx.Query)`" in $($ctx.Label) repository."
@@ -713,7 +713,7 @@ function Initialize-UIController($winControls) {
                     $script:txtSearchPlaceholder.Visibility = "Visible"
                 }
                 if ($script:btnClearSearch) { $script:btnClearSearch.Visibility = "Collapsed" }
-                Clear-OnlineSearchResults
+                Clear-OnlineSearchResult
                 Show-CategoryView
             }
 
@@ -754,7 +754,7 @@ function Initialize-UIController($winControls) {
     if ($script:btnClearSearch) {
         $script:btnClearSearch.Add_Click({
             $script:txtSearch.Text = ""
-            Clear-OnlineSearchResults
+            Clear-OnlineSearchResult
             Show-CategoryView
         })
     }
@@ -852,14 +852,14 @@ function Initialize-UIController($winControls) {
         $script:btnCancelInstall.Content = "Cancel"
         $script:btnCancelInstall.IsEnabled = $true
         if ($script:btnExportLog) { $script:btnExportLog.Visibility = "Collapsed" }
-        Invoke-DoEvents
+        Invoke-UiPump
     }
 
     # Upgrade All handler
     if ($script:btnUpgradeAll) {
         $script:btnUpgradeAll.Add_Click({
             $prov = $script:pkgProvider
-            if (-not (Ensure-ProviderReady -Provider $prov -ContinueOnSuccess)) { return }
+            if (-not (Initialize-Provider -Provider $prov -ContinueOnSuccess)) { return }
             if ($script:ProgressOverlay.Visibility -ne "Visible") { Open-ProgressOverlay }
             try {
                 Start-SystemUpgrade $script:winControls -Provider $prov
@@ -873,7 +873,7 @@ function Initialize-UIController($winControls) {
 
     # Preset save handler (supports .json schema and legacy .txt)
     $script:btnSave.Add_Click({
-        $selectedApps = @(Get-SelectedApps)
+        $selectedApps = @(Get-SelectedApp)
         if ($selectedApps.Count -eq 0) {
             [System.Windows.MessageBox]::Show("No applications are selected to save.", "WinKit Preset", 0, 48)
             return
@@ -917,8 +917,8 @@ function Initialize-UIController($winControls) {
         if ($ofd.ShowDialog() -eq $true) {
             if (Test-Path $ofd.FileName) {
                 try {
-                    $targetIds = @(Import-WinKitPresetIds -Path $ofd.FileName)
-                    Clear-OnlineSearchResults
+                    $targetIds = @(Import-WinKitPreset -Path $ofd.FileName)
+                    Clear-OnlineSearchResult
 
                     $matchedTargets = @{}
                     foreach ($chk in $script:checkBoxes) {
@@ -944,7 +944,7 @@ function Initialize-UIController($winControls) {
                     }
 
                     Update-InstallCount
-                    $totalSelected = @(Get-SelectedApps).Count
+                    $totalSelected = @(Get-SelectedApp).Count
                     $provLabel = if ($prov -eq 'choco') { 'Chocolatey' } else { 'WinGet' }
                     $extraMsg = if ($customCount -gt 0) { "`n($customCount custom $provLabel package(s) added to search results)" } else { "" }
                     [System.Windows.MessageBox]::Show("Loaded preset with $totalSelected selected application(s).$extraMsg", "WinKit", 0, 64)
@@ -999,10 +999,10 @@ function Initialize-UIController($winControls) {
 
     # Install button handler
     $script:btnInstall.Add_Click({
-        $toInstall = @(Get-SelectedApps)
+        $toInstall = @(Get-SelectedApp)
         if ($toInstall.Count -eq 0) { return }
         $prov = $script:pkgProvider
-        if (-not (Ensure-ProviderReady -Provider $prov -ContinueOnSuccess)) { return }
+        if (-not (Initialize-Provider -Provider $prov -ContinueOnSuccess)) { return }
         Write-Host "Install button clicked ($prov). Selected apps: $($toInstall.Count)" -ForegroundColor Cyan
 
         if ($script:ProgressOverlay.Visibility -ne "Visible") { Open-ProgressOverlay }

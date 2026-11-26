@@ -262,7 +262,7 @@ function Start-AppsInstallation($toInstall, $winControls, [switch]$isUpgradeAll,
         $LblProgress.Text = if ($isUpgradeAll) { "Running $provLabel Upgrade..." } else { "Installing ($count / $($toInstall.Count)): $($app.Name)" }
         $TxtLog.AppendText("`n---> Starting ($provLabel): $($app.Name)`n")
         $TxtLog.ScrollToEnd()
-        Invoke-DoEvents
+        Invoke-UiPump
 
         if (-not $isUpgradeAll -and -not (Test-SafePackageId $targetId)) {
             $errMsg = if ($pkgProvider -eq 'choco' -and -not $targetId) {
@@ -453,7 +453,7 @@ function Start-AppsInstallation($toInstall, $winControls, [switch]$isUpgradeAll,
                     }
                 }
 
-                Invoke-DoEvents
+                Invoke-UiPump
                 Start-Sleep -Milliseconds 50
             }
 
@@ -497,7 +497,7 @@ function Start-AppsInstallation($toInstall, $winControls, [switch]$isUpgradeAll,
                 if ($app.Name -eq "TeamSpeak 3") {
                     $TxtLog.AppendText("`n[+] Ensuring bundled Overwolf is removed...`n")
                     $TxtLog.ScrollToEnd()
-                    Invoke-DoEvents
+                    Invoke-UiPump
                     
                     # 1. Kill background NSIS downloader stub and active Overwolf processes
                     Get-Process -Name "Un_A", "Overwolf*", "OWClient*", "OWLauncher*" -ErrorAction SilentlyContinue | Stop-Process -Force
@@ -518,7 +518,7 @@ function Start-AppsInstallation($toInstall, $winControls, [switch]$isUpgradeAll,
                 if ($app.Name -eq "MSI Afterburner") {
                     $TxtLog.AppendText("`n[+] Removing bundled RivaTuner...`n")
                     $TxtLog.ScrollToEnd()
-                    Invoke-DoEvents
+                    Invoke-UiPump
                     Start-Process "winget" -ArgumentList "uninstall --exact --id Guru3D.RTSS --silent --accept-source-agreements" -Wait -NoNewWindow -ErrorAction SilentlyContinue
                 }
             }
@@ -527,7 +527,7 @@ function Start-AppsInstallation($toInstall, $winControls, [switch]$isUpgradeAll,
             $TxtLog.ScrollToEnd()
             $installResults += @{ App = $app; Code = $finalCode; Cancelled = $false; Log = $appLog }
             Write-Host "Finished $($app.Name) with code $finalCode" -ForegroundColor Green
-            Invoke-DoEvents
+            Invoke-UiPump
         } else {
             $installResults += @{ App = $app; Code = -1; Cancelled = $true; Log = $appLog }
         }
