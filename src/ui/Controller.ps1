@@ -302,7 +302,7 @@ function Initialize-UIController($winControls) {
             Cancelled = $false
             Log       = $setupLog
         })
-        Show-InstallSummaryCards -InstallResults $resCard -WinControls $script:winControls -Title "$provLabel Setup"
+        Show-InstallSummary -InstallResults $resCard -WinControls $script:winControls -Title "$provLabel Setup"
         if ($script:btnInstall) { $script:btnInstall.IsEnabled = $true }
         if ($script:btnUpgradeAll) { $script:btnUpgradeAll.IsEnabled = $true }
         return $ok

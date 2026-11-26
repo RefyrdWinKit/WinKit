@@ -43,7 +43,13 @@ function Get-ChocoExecutable {
 function Install-ChocolateyClient {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     Set-ExecutionPolicy Bypass -Scope Process -Force
-    Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+    $tmpChoco = Join-Path $env:TEMP "choco_install_$PID.ps1"
+    try {
+        Invoke-WebRequest -Uri 'https://community.chocolatey.org/install.ps1' -OutFile $tmpChoco -UseBasicParsing
+        & $tmpChoco
+    } finally {
+        Remove-Item $tmpChoco -Force -ErrorAction SilentlyContinue
+    }
     $chocoBin = Join-Path $env:ProgramData "chocolatey\bin"
     if ((Test-Path $chocoBin) -and -not ($env:PATH -like "*$chocoBin*")) {
         $env:PATH += ";$chocoBin"
@@ -82,7 +88,7 @@ function Get-InstallResultStatus {
     return @{ Color = "#E81123"; Text = "Installation failed"; Desc = "Installer returned error code $Code." }
 }
 
-function Show-InstallSummaryCards {
+function Show-InstallSummary {
     param($InstallResults, $WinControls, [string]$Title = "Installation Complete")
 
     $TxtLog = $WinControls.TxtLog
@@ -226,8 +232,6 @@ function Start-AppsInstallation($toInstall, $winControls, [switch]$isUpgradeAll,
     $LblProgress = $winControls.LblProgress
     $PbInstall = $winControls.PbInstall
     $BtnCancelInstall = $winControls.BtnCancelInstall
-    $SummaryScroll = $winControls.SummaryScroll
-    $SummaryPanel = $winControls.SummaryPanel
     $BtnExportLog = $winControls.BtnExportLog
 
     $global:isInstallFinished = $false
@@ -536,7 +540,7 @@ function Start-AppsInstallation($toInstall, $winControls, [switch]$isUpgradeAll,
     } else {
         "Installation Complete"
     }
-    Show-InstallSummaryCards -InstallResults $installResults -WinControls $winControls -Title $summaryTitle
+    Show-InstallSummary -InstallResults $installResults -WinControls $winControls -Title $summaryTitle
 }
 
 

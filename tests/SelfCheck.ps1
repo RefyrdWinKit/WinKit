@@ -140,8 +140,8 @@ $script:pkgProvider = 'winget'
 Update-ProviderUI
 Assert-True ($robloxChk.IsEnabled) 'Apps without ChocoId must re-enable in WinGet mode'
 
-# Verify Show-InstallSummaryCards renders a summary card properly
-Show-InstallSummaryCards -InstallResults @(@{ App = @{ Name = 'Chocolatey' }; Code = 0; Cancelled = $false; Log = 'OK' }) -WinControls $testControls -Title 'Chocolatey Setup'
+# Verify Show-InstallSummary renders a summary card properly
+Show-InstallSummary -InstallResults @(@{ App = @{ Name = 'Chocolatey' }; Code = 0; Cancelled = $false; Log = 'OK' }) -WinControls $testControls -Title 'Chocolatey Setup'
 Assert-True ($testControls.SummaryScroll.Visibility -eq 'Visible' -and $testControls.PbInstall.Visibility -eq 'Collapsed' -and $testControls.SummaryPanel.Children.Count -eq 1) 'Summary card must render and hide progress bar'
 $testControls.TxtSearch.Text = '[chrome'
 $testControls.TxtSearch.Text = ''
