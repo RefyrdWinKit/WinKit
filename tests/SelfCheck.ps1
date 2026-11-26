@@ -28,7 +28,12 @@ foreach ($f in $psFiles) {
 foreach ($app in $global:apps) {
     Assert-True (Test-SafePackageId $app.Id) "Built-in app ID should be valid: $($app.Id)"
     Assert-True ($app.Id -match '^[^\s.]+\.[^\s]+$') "Built-in app ID should contain dot: $($app.Id)"
+    if ($app.ChocoId) {
+        Assert-True (Test-SafePackageId $app.ChocoId) "Built-in ChocoId should be valid: $($app.ChocoId)"
+    }
 }
+Assert-True ((Get-AppPackageId -App $global:apps[0] -Provider 'winget') -eq 'Google.Chrome') 'Get-AppPackageId winget mismatch'
+Assert-True ((Get-AppPackageId -App $global:apps[0] -Provider 'choco') -eq 'googlechrome') 'Get-AppPackageId choco mismatch'
 Assert-True (-not (Test-SafePackageId 'Foo.Bar & calc.exe')) 'Command injection in ID must be rejected'
 Assert-True (-not (Test-SafePackageId 'Foo.Bar" --force')) 'Quote injection in ID must be rejected'
 Assert-True (-not (Test-SafePackageId '')) 'Empty ID must be rejected'
@@ -55,6 +60,17 @@ $ruList = @(
 $parsedRu = @(ConvertFrom-WingetTable -Lines $ruList)
 Assert-True ($parsedRu.Count -eq 1 -and $parsedRu[0].Id -eq 'Notepad++.Notepad++' -and $parsedRu[0].Available -eq '8.9.9.1') 'Localized headers should parse cleanly'
 
+$chocoList = @(
+    'Chocolatey v2.4.0'
+    'git|2.47.1'
+    '7zip|24.08'
+    '2 packages installed.'
+)
+$parsedChoco = @(ConvertFrom-ChocoLines -Lines $chocoList)
+Assert-True ($parsedChoco.Count -eq 2 -and $parsedChoco[0].Id -eq 'git' -and $parsedChoco[1].Version -eq '24.08') 'Chocolatey list -r should parse cleanly'
+$parsedChocoOut = @(ConvertFrom-ChocoLines -Lines @('7zip|24.08|24.09|false') -Outdated)
+Assert-True ($parsedChocoOut.Count -eq 1 -and $parsedChocoOut[0].Available -eq '24.09') 'Chocolatey outdated -r should parse available version'
+
 # 5. Validate Get-InstallResultStatus classification
 $stCancel = Get-InstallResultStatus -Code -1 -Log '' -Cancelled $true
 Assert-True ($stCancel.Text -eq 'Cancelled') 'Cancelled status mismatch'
@@ -64,6 +80,12 @@ $stUpd = Get-InstallResultStatus -Code 0 -Log 'Trying to upgrade... Successfully
 Assert-True ($stUpd.Text -eq 'Successfully updated') 'Updated status mismatch'
 $stPartialFail = Get-InstallResultStatus -Code -1978335212 -Log 'Trying to upgrade... Successfully installed App1... Installer failed for App2'
 Assert-True ($stPartialFail.Text -eq 'Installation failed') 'Non-zero exit code must fail even if earlier log line succeeded'
+$stChocoSame = Get-InstallResultStatus -Code 0 -Log "git v2.47.0 is already installed.`nChocolatey installed 0/1 packages."
+Assert-True ($stChocoSame.Text -eq 'Already installed (Up to date)') 'Chocolatey already installed status mismatch'
+$stChocoOk = Get-InstallResultStatus -Code 0 -Log 'Chocolatey installed 1/1 packages.'
+Assert-True ($stChocoOk.Text -eq 'Installed successfully') 'Chocolatey install status mismatch'
+$stChocoUpd = Get-InstallResultStatus -Code 0 -Log 'Chocolatey upgraded 1/1 packages.'
+Assert-True ($stChocoUpd.Text -eq 'Successfully updated') 'Chocolatey upgrade status mismatch'
 
 # 6. Validate JSON & TXT preset round-trip
 $tmpJson = Join-Path $env:TEMP "winkit_test_preset_$PID.json"
@@ -97,10 +119,20 @@ $testControls = @{
     BtnExportLog = $global:win.FindName('BtnExportLog'); SearchResultsView = $global:win.FindName('SearchResultsView')
     SearchResultsWrap = $global:win.FindName('SearchResultsWrap'); LblSearchResultStatus = $global:win.FindName('LblSearchResultStatus')
     BtnBackToCats = $global:win.FindName('BtnBackToCats'); PbSearchLoading = $global:win.FindName('PbSearchLoading')
-    BtnUpgradeAll = $global:win.FindName('BtnUpgradeAll')
+    BtnUpgradeAll = $global:win.FindName('BtnUpgradeAll'); BtnBackendWinget = $global:win.FindName('BtnBackendWinget')
+    BtnBackendChoco = $global:win.FindName('BtnBackendChoco'); LblSearchResultTitle = $global:win.FindName('LblSearchResultTitle')
 }
 . (Join-Path $root 'src\core\Theme.ps1')
 Initialize-UIController $testControls
+Assert-True ($testControls.TxtSearchPlaceholder.Text -like '*WinGet*') 'Default search placeholder should mention WinGet'
+$script:pkgProvider = 'choco'
+Update-ProviderUI
+Assert-True ($testControls.TxtSearchPlaceholder.Text -like '*Chocolatey*') 'Choco search placeholder should mention Chocolatey'
+$robloxChk = $script:checkBoxes | Where-Object { $_.Uid -eq 'Roblox' } | Select-Object -First 1
+Assert-True (-not $robloxChk.IsEnabled) 'Apps without ChocoId must be disabled in Chocolatey mode'
+$script:pkgProvider = 'winget'
+Update-ProviderUI
+Assert-True ($robloxChk.IsEnabled) 'Apps without ChocoId must re-enable in WinGet mode'
 $testControls.TxtSearch.Text = '[chrome'
 $testControls.TxtSearch.Text = ''
 Assert-True ($testControls.BtnInstall.Content -eq 'Install') 'Install button count should reset cleanly'

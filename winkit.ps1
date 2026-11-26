@@ -104,6 +104,8 @@ try {
         BtnBackToCats        = $global:win.FindName("BtnBackToCats")
         PbSearchLoading      = $global:win.FindName("PbSearchLoading")
         BtnUpgradeAll        = $global:win.FindName("BtnUpgradeAll")
+        BtnBackendWinget     = $global:win.FindName("BtnBackendWinget")
+        BtnBackendChoco      = $global:win.FindName("BtnBackendChoco")
     }
 
     # Initialize UI Controller & Theme

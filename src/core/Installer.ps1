@@ -5,6 +5,30 @@ function Test-SafePackageId {
     return (-not [string]::IsNullOrWhiteSpace($Id)) -and ($Id -match '^[a-zA-Z0-9._+\-]+$')
 }
 
+function Get-ChocoExecutable {
+    $cmd = Get-Command "choco.exe" -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+    $defaultPath = Join-Path $env:ProgramData "chocolatey\bin\choco.exe"
+    if (Test-Path $defaultPath) { return $defaultPath }
+    return $null
+}
+
+function Install-ChocolateyClient {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    Set-ExecutionPolicy Bypass -Scope Process -Force
+    Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+    $chocoBin = Join-Path $env:ProgramData "chocolatey\bin"
+    if ((Test-Path $chocoBin) -and -not ($env:PATH -like "*$chocoBin*")) {
+        $env:PATH += ";$chocoBin"
+    }
+}
+
+function Get-AppPackageId {
+    param($App, [string]$Provider = 'winget')
+    if ($Provider -eq 'choco') { return $App.ChocoId }
+    return $App.Id
+}
+
 function Get-InstallResultStatus {
     param([int]$Code, [string]$Log = "", [bool]$Cancelled = $false)
 
@@ -13,14 +37,15 @@ function Get-InstallResultStatus {
     }
 
     $alreadyInstalledCodes = @(-1978335220, 2316632076, -1978335189, 2316632107, -1978335187, 2316632109, -1978335190, 2316632106)
-    $alreadyInstalledRegex = "(?i)(No (?:newer|available|applicable) (?:package|upgrade|update)|найден.*установленный пакет.*не найдено|не найдено.*обновлен|не найдено.*верси|уже установлен|установлена последняя версия|already installed.*no (?:newer|available|upgrade))"
-    $isInstalledNoUpdate = ($Code -in $alreadyInstalledCodes) -or (($Log -match $alreadyInstalledRegex) -and -not ($Log -match "(?i)(Successfully installed|Успешно установлен)"))
+    $alreadyInstalledRegex = "(?i)(No (?:newer|available|applicable) (?:package|upgrade|update)|найден.*установленный пакет.*не найдено|не найдено.*обновлен|не найдено.*верси|уже установлен|установлена последняя версия|already installed.*no (?:newer|available|upgrade)|is already installed|already installed\.\s*[\r\n].*installed 0/\d+ packages|Chocolatey upgraded 0/\d+ packages)"
+    $didFreshInstall = ($Log -match "(?i)(Successfully installed|Успешно установлен|installed [1-9]\d*/\d+ packages|upgraded [1-9]\d*/\d+ packages)")
+    $isInstalledNoUpdate = ($Code -in $alreadyInstalledCodes) -or (($Log -match $alreadyInstalledRegex) -and -not $didFreshInstall)
     if ($isInstalledNoUpdate) {
         return @{ Color = "#00BCF9"; Text = "Already installed (Up to date)"; Desc = "The latest version is already installed on your system." }
     }
 
     $isSuccess = $Code -in @(0, 3010, 1641)
-    $isUpgradeAttempt = $Log -match "(?i)(Trying to upgrade|попытка обновить|Upgrading|Обновление пакета)"
+    $isUpgradeAttempt = $Log -match "(?i)(Trying to upgrade|попытка обновить|Upgrading|Обновление пакета|Chocolatey upgraded)"
     if ($isSuccess -and $isUpgradeAttempt) {
         return @{ Color = "#FFC83B"; Text = "Successfully updated"; Desc = "Application was updated to the newest available release." }
     }
@@ -30,7 +55,7 @@ function Get-InstallResultStatus {
     return @{ Color = "#E81123"; Text = "Installation failed"; Desc = "Installer returned error code $Code." }
 }
 
-function Start-AppsInstallation($toInstall, $winControls, [switch]$isUpgradeAll) {
+function Start-AppsInstallation($toInstall, $winControls, [switch]$isUpgradeAll, [string]$Provider = 'winget') {
     $TxtLog = $winControls.TxtLog
     $LblProgressTitle = $winControls.LblProgressTitle
     $LblProgress = $winControls.LblProgress
@@ -60,48 +85,71 @@ function Start-AppsInstallation($toInstall, $winControls, [switch]$isUpgradeAll)
             continue
         }
 
+        $pkgProvider = if ($app.Provider) { $app.Provider } else { $Provider }
+        $targetId = if ($isUpgradeAll) { $app.Id } else { Get-AppPackageId -App $app -Provider $pkgProvider }
+        $provLabel = if ($pkgProvider -eq 'choco') { 'Chocolatey' } else { 'WinGet' }
+
         $count++
-        $LblProgress.Text = if ($isUpgradeAll) { "Running WinGet Upgrade..." } else { "Installing ($count / $($toInstall.Count)): $($app.Name)" }
-        $TxtLog.AppendText("`n---> Starting: $($app.Name)`n")
+        $LblProgress.Text = if ($isUpgradeAll) { "Running $provLabel Upgrade..." } else { "Installing ($count / $($toInstall.Count)): $($app.Name)" }
+        $TxtLog.AppendText("`n---> Starting ($provLabel): $($app.Name)`n")
         $TxtLog.ScrollToEnd()
         Invoke-DoEvents
 
-        if (-not $isUpgradeAll -and -not (Test-SafePackageId $app.Id)) {
-            $errMsg = "Invalid package identifier: $($app.Id)"
+        if (-not $isUpgradeAll -and -not (Test-SafePackageId $targetId)) {
+            $errMsg = if ($pkgProvider -eq 'choco' -and -not $targetId) {
+                "$($app.Name) is not available in Chocolatey."
+            } else {
+                "Invalid package identifier: $targetId"
+            }
             $TxtLog.AppendText("[!] $errMsg`n")
             $TxtLog.ScrollToEnd()
             $installResults += @{ App = $app; Code = -1; Cancelled = $false; Log = $errMsg }
             continue
         }
 
-        if ($isUpgradeAll) {
-            $wArgs = "upgrade --all --silent --disable-interactivity --accept-package-agreements --accept-source-agreements"
-        } else {
-            $wArgs = "install --exact --id=`"$($app.Id)`" --source=winget --silent --disable-interactivity --accept-package-agreements --accept-source-agreements"
-        }
-        if ($app.Dep -and $global:depCheckBoxes.ContainsKey($app.Name)) {
-            $depChk = $global:depCheckBoxes[$app.Name]
-            if (-not $depChk.IsChecked) {
-                $wArgs += " --skip-dependencies"
+        if ($pkgProvider -eq 'choco') {
+            $chocoExe = Get-ChocoExecutable
+            if (-not $chocoExe) {
+                $errMsg = "Chocolatey executable (choco.exe) not found."
+                $TxtLog.AppendText("[!] $errMsg`n")
+                $TxtLog.ScrollToEnd()
+                $installResults += @{ App = $app; Code = -1; Cancelled = $false; Log = $errMsg }
+                continue
             }
+            $runnerExe = "`"$chocoExe`""
+            $wArgs = if ($isUpgradeAll) { "upgrade all -y --no-progress" } else { "install `"$targetId`" -y --no-progress" }
+            $useFallback = $false
+        } else {
+            $runnerExe = "winget"
+            if ($isUpgradeAll) {
+                $wArgs = "upgrade --all --silent --disable-interactivity --accept-package-agreements --accept-source-agreements"
+            } else {
+                $wArgs = "install --exact --id=`"$targetId`" --source=winget --silent --disable-interactivity --accept-package-agreements --accept-source-agreements"
+            }
+            if ($app.Dep -and $global:depCheckBoxes.ContainsKey($app.Name)) {
+                $depChk = $global:depCheckBoxes[$app.Name]
+                if (-not $depChk.IsChecked) {
+                    $wArgs += " --skip-dependencies"
+                }
+            }
+            $useFallback = ($app.Scope -eq "User" -and $global:isAdmin)
         }
 
-        $useFallback = ($app.Scope -eq "User" -and $global:isAdmin)
         $finalCode = 0
 
-        $safeId = $app.Id -replace '[^a-zA-Z0-9._-]', '_'
+        $safeId = $targetId -replace '[^a-zA-Z0-9._-]', '_'
         $tmpOut = "$env:TEMP\winget_out_$safeId.log"
         $tmpDone = "$env:TEMP\winget_done_$safeId.log"
         $batPath = "$env:TEMP\winget_run_$safeId.bat"
         $vbsPath = "$env:TEMP\winget_run_$safeId.vbs"
 
-        # Helper to run winget and stream output without blocking the UI thread
+        # Helper to run package manager and stream output without blocking the UI thread
         $runWinget = {
             param([bool]$asUserFallback)
 
             Remove-Item $tmpOut, $tmpDone, $batPath, $vbsPath -Force -ErrorAction SilentlyContinue
 
-            $batCmd = "@echo off`r`nchcp 65001 > nul`r`nwinget $wArgs > `"$tmpOut`" 2>&1`r`necho %ERRORLEVEL% > `"$tmpDone`""
+            $batCmd = "@echo off`r`nchcp 65001 > nul`r`n$runnerExe $wArgs > `"$tmpOut`" 2>&1`r`necho %ERRORLEVEL% > `"$tmpDone`""
             [System.IO.File]::WriteAllText($batPath, $batCmd, [System.Text.UTF8Encoding]::new($false))
 
             $procHandle = $null
@@ -275,8 +323,8 @@ function Start-AppsInstallation($toInstall, $winControls, [switch]$isUpgradeAll)
         Remove-Item $tmpOut, $tmpDone, $batPath, $vbsPath -Force -ErrorAction SilentlyContinue
 
         if (-not $global:cancelInstall) {
-            # Bundled bloatware cleanup & background downloader eradication (only after successful install)
-            if ($wArgs -match "--skip-dependencies" -and $finalCode -in @(0, 3010, 1641)) {
+            # Bundled bloatware cleanup & background downloader eradication (WinGet only, after successful install)
+            if ($pkgProvider -eq 'winget' -and $wArgs -match "--skip-dependencies" -and $finalCode -in @(0, 3010, 1641)) {
                 if ($app.Name -eq "TeamSpeak 3") {
                     $TxtLog.AppendText("`n[+] Ensuring bundled Overwolf is removed...`n")
                     $TxtLog.ScrollToEnd()
@@ -454,12 +502,14 @@ function Start-AppsInstallation($toInstall, $winControls, [switch]$isUpgradeAll)
 }
 
 
-function Start-SystemUpgrade($winControls) {
+function Start-SystemUpgrade($winControls, [string]$Provider = 'winget') {
+    $provLabel = if ($Provider -eq 'choco') { 'Chocolatey' } else { 'WinGet' }
     $virtualApp = @{
-        Name  = "System-wide Application Upgrade"
-        Id    = "WinGet.UpgradeAll"
-        Cat   = 99
-        Sel   = $true
+        Name     = "System-wide Application Upgrade ($provLabel)"
+        Id       = if ($Provider -eq 'choco') { "Choco.UpgradeAll" } else { "WinGet.UpgradeAll" }
+        Cat      = 99
+        Sel      = $true
+        Provider = $Provider
     }
-    Start-AppsInstallation @($virtualApp) $winControls -isUpgradeAll
+    Start-AppsInstallation @($virtualApp) $winControls -isUpgradeAll -Provider $Provider
 }

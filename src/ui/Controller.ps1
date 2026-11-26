@@ -73,6 +73,27 @@ function ConvertFrom-WingetTable {
     return $results
 }
 
+function ConvertFrom-ChocoLines {
+    param([string[]]$Lines, [switch]$Outdated)
+
+    $results = @()
+    if (-not $Lines) { return $results }
+    foreach ($line in $Lines) {
+        $t = $line.Trim()
+        if (-not $t -or $t -notmatch '\|') { continue }
+        $parts = $t -split '\|'
+        if ($parts.Count -lt 2) { continue }
+        $id = $parts[0].Trim()
+        if (-not (Test-SafePackageId $id)) { continue }
+        if ($Outdated -and $parts.Count -ge 3) {
+            $results += [PSCustomObject]@{ Name = $id; Id = $id; Version = $parts[1].Trim(); Available = $parts[2].Trim() }
+        } else {
+            $results += [PSCustomObject]@{ Name = $id; Id = $id; Version = $parts[1].Trim(); Available = "" }
+        }
+    }
+    return $results
+}
+
 function ConvertTo-WinKitPresetJson {
     param([string[]]$PackageIds)
 
@@ -144,7 +165,11 @@ function Initialize-UIController($winControls) {
     $script:lblSearchResultStatus = $winControls.LblSearchResultStatus
     $script:btnBackToCats = $winControls.BtnBackToCats
     $script:pbSearchLoading = $winControls.PbSearchLoading
+    $script:btnBackendWinget = $winControls.BtnBackendWinget
+    $script:btnBackendChoco = $winControls.BtnBackendChoco
+    $script:lblSearchResultTitle = $winControls.LblSearchResultTitle
 
+    $script:pkgProvider = "winget"
     $script:isConsoleVisible = $false
     $script:checkBoxes = @()
     $script:onlineCheckBoxes = @()
@@ -161,8 +186,10 @@ function Initialize-UIController($winControls) {
         foreach ($chk in ($script:checkBoxes + $script:onlineCheckBoxes)) {
             if ($chk.IsChecked -eq $true -and $script:registeredApps.ContainsKey($chk.Uid)) {
                 $app = $script:registeredApps[$chk.Uid]
-                if (-not $seenIds.ContainsKey($app.Id)) {
-                    $seenIds[$app.Id] = $true
+                $prov = if ($app.Provider) { $app.Provider } else { $script:pkgProvider }
+                $pkgId = Get-AppPackageId -App $app -Provider $prov
+                if ($pkgId -and -not $seenIds.ContainsKey($pkgId)) {
+                    $seenIds[$pkgId] = $true
                     $selected += $app
                 }
             }
@@ -177,6 +204,97 @@ function Initialize-UIController($winControls) {
         } else {
             $script:btnInstall.Content = "Install"
         }
+    }
+
+    function script:Update-ProviderUI {
+        $isChoco = ($script:pkgProvider -eq 'choco')
+        if ($script:btnBackendWinget -and $script:btnBackendChoco) {
+            $primaryStyle = $script:win.Resources["PrimaryButton"]
+            if ($isChoco) {
+                $script:btnBackendWinget.Style = $null
+                $script:btnBackendWinget.Background = [System.Windows.Media.Brushes]::Transparent
+                $script:btnBackendWinget.FontWeight = [System.Windows.FontWeights]::Normal
+                $script:btnBackendChoco.Style = $primaryStyle
+                $script:btnBackendChoco.FontWeight = [System.Windows.FontWeights]::SemiBold
+            } else {
+                $script:btnBackendChoco.Style = $null
+                $script:btnBackendChoco.Background = [System.Windows.Media.Brushes]::Transparent
+                $script:btnBackendChoco.FontWeight = [System.Windows.FontWeights]::Normal
+                $script:btnBackendWinget.Style = $primaryStyle
+                $script:btnBackendWinget.FontWeight = [System.Windows.FontWeights]::SemiBold
+            }
+        }
+
+        $provName = if ($isChoco) { "Chocolatey" } else { "WinGet" }
+        if ($script:txtSearchPlaceholder) { $script:txtSearchPlaceholder.Text = "Search apps (Enter for $provName)..." }
+        if ($script:lblSearchResultTitle) { $script:lblSearchResultTitle.Text = "$provName Search Results" }
+
+        foreach ($chk in $script:checkBoxes) {
+            $app = if ($script:registeredApps.ContainsKey($chk.Uid)) { $script:registeredApps[$chk.Uid] } else { $null }
+            if ($isChoco -and $app -and -not $app.ChocoId) {
+                $chk.IsChecked = $false
+                $chk.IsEnabled = $false
+                $chk.Opacity = 0.45
+                $chk.ToolTip = "Not available in Chocolatey"
+            } else {
+                $chk.IsEnabled = $true
+                $chk.Opacity = 1.0
+                $chk.ToolTip = $null
+            }
+        }
+        Update-InstallCount
+    }
+
+    function script:Ensure-ChocoReady {
+        if (Get-ChocoExecutable) { return $true }
+        $ans = [System.Windows.MessageBox]::Show(
+            "Chocolatey is not installed on this PC.`nInstall Chocolatey now?",
+            "WinKit - Chocolatey",
+            4, 32
+        )
+        if ($ans -ne [System.Windows.MessageBoxResult]::Yes) { return $false }
+
+        Open-ProgressOverlay
+        $script:winControls.LblProgressTitle.Text = "Installing Chocolatey..."
+        $script:winControls.LblProgress.Text = "Downloading and installing Chocolatey..."
+        $script:winControls.PbInstall.IsIndeterminate = $true
+        $script:TxtLog.AppendText("---> Installing Chocolatey via community.chocolatey.org...`n")
+        Invoke-DoEvents
+
+        try {
+            $out = Install-ChocolateyClient 2>&1 | Out-String
+            if ($out) { $script:TxtLog.AppendText($out) }
+            $ok = [bool](Get-ChocoExecutable)
+            $script:TxtLog.AppendText("`n---> Chocolatey setup $(if ($ok) { 'completed' } else { 'failed' }).`n")
+            $script:winControls.LblProgress.Text = if ($ok) { "Chocolatey installed!" } else { "Installation failed." }
+            $global:isInstallFinished = $true
+            $script:btnCancelInstall.Content = "Close"
+            $script:btnCancelInstall.IsEnabled = $true
+            return $ok
+        } catch {
+            $script:TxtLog.AppendText("`n[!] Chocolatey installation failed: $_`n")
+            $global:isInstallFinished = $true
+            $script:btnCancelInstall.Content = "Close"
+            $script:btnCancelInstall.IsEnabled = $true
+            return $false
+        } finally {
+            if ($script:btnInstall) { $script:btnInstall.IsEnabled = $true }
+            if ($script:btnUpgradeAll) { $script:btnUpgradeAll.IsEnabled = $true }
+        }
+    }
+
+    function script:Set-PackageProvider {
+        param([string]$Provider)
+        if ($Provider -eq $script:pkgProvider) { return }
+        if ($Provider -eq 'choco' -and -not (Ensure-ChocoReady)) { return }
+
+        $script:pkgProvider = $Provider
+        Clear-OnlineSearchResults
+        Show-CategoryView
+        $script:installedPackages = @{}
+        Update-AppInstalledBadge
+        Update-ProviderUI
+        Start-BackgroundPackageDetection
     }
 
     function script:Show-CategoryView {
@@ -201,16 +319,18 @@ function Initialize-UIController($winControls) {
         if ($null -eq $script:installedPackages) { return }
         $brushGreen = $global:brushConverter.ConvertFromString("#107C41")
         $brushYellow = $global:brushConverter.ConvertFromString("#DCA200")
+        $provLabel = if ($script:pkgProvider -eq 'choco') { "Chocolatey" } else { "WinGet" }
 
         foreach ($app in $global:apps) {
             if (-not $script:appStatusLabels.ContainsKey($app.Id)) { continue }
             $lbl = $script:appStatusLabels[$app.Id]
-            if ($script:installedPackages.ContainsKey($app.Id)) {
-                $info = $script:installedPackages[$app.Id]
+            $lookupId = Get-AppPackageId -App $app -Provider $script:pkgProvider
+            if ($lookupId -and $script:installedPackages.ContainsKey($lookupId)) {
+                $info = $script:installedPackages[$lookupId]
                 if ($info.Available) {
                     $lbl.Text = "Installed (v$($info.Version)) • Update: v$($info.Available)"
                     $lbl.Foreground = $brushYellow
-                    $lbl.ToolTip = "Installed: $($info.Version). Available in WinGet: $($info.Available)"
+                    $lbl.ToolTip = "Installed: $($info.Version). Available in ${provLabel}: $($info.Available)"
                 } else {
                     $verStr = if ($info.Version -and $info.Version -ne "Unknown") { " (v$($info.Version))" } else { "" }
                     $lbl.Text = "Installed$verStr"
@@ -270,13 +390,46 @@ function Initialize-UIController($winControls) {
     }
 
     function script:Start-BackgroundPackageDetection {
+        $prov = $script:pkgProvider
+        if ($prov -eq 'choco') {
+            $chocoExe = Get-ChocoExecutable
+            if (-not $chocoExe) { return }
+            $worker = {
+                param([string]$exe)
+                [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+                @{
+                    List     = @(& $exe list -r 2>$null)
+                    Outdated = @(& $exe outdated -r 2>$null)
+                }
+            }
+            Start-BackgroundTask -Worker $worker -Arguments @($chocoExe) -Context @{ Provider = 'choco' } -OnComplete {
+                param($res, $err, $ctx)
+                if ($err -or -not $res -or $ctx.Provider -ne $script:pkgProvider) { return }
+                $data = $res | Select-Object -First 1
+                $installed = [hashtable]::new([System.StringComparer]::OrdinalIgnoreCase)
+                foreach ($item in @(ConvertFrom-ChocoLines -Lines $data.List)) {
+                    $installed[$item.Id] = @{ Version = $item.Version; Available = "" }
+                }
+                foreach ($upd in @(ConvertFrom-ChocoLines -Lines $data.Outdated -Outdated)) {
+                    if ($installed.ContainsKey($upd.Id)) {
+                        $installed[$upd.Id].Available = $upd.Available
+                    } else {
+                        $installed[$upd.Id] = @{ Version = $upd.Version; Available = $upd.Available }
+                    }
+                }
+                $script:installedPackages = $installed
+                Update-AppInstalledBadge
+            }
+            return
+        }
+
         $worker = {
             [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
             winget list --source winget --accept-source-agreements 2>$null
         }
-        Start-BackgroundTask -Worker $worker -OnComplete {
-            param($lines, $err)
-            if ($err -or -not $lines) { return }
+        Start-BackgroundTask -Worker $worker -Context @{ Provider = 'winget' } -OnComplete {
+            param($lines, $err, $ctx)
+            if ($err -or -not $lines -or $ctx.Provider -ne $script:pkgProvider) { return }
             $installed = @{}
             foreach ($item in (ConvertFrom-WingetTable -Lines $lines)) {
                 $installed[$item.Id] = @{
@@ -357,7 +510,7 @@ function Initialize-UIController($winControls) {
     }
 
     function script:Add-OnlineResultCard {
-        param($Item, [bool]$IsChecked = $false)
+        param($Item, [bool]$IsChecked = $false, [string]$Provider = $script:pkgProvider)
 
         $card = New-Object System.Windows.Controls.Border
         $card.Background = $script:win.Resources["ControlBg"]
@@ -378,10 +531,12 @@ function Initialize-UIController($winControls) {
         $chk.Margin = "0,0,0,2"
 
         $script:registeredApps[$Item.Id] = @{
-            Name = $Item.Name
-            Id   = $Item.Id
-            Cat  = 99
-            Sel  = $false
+            Name     = $Item.Name
+            Id       = $Item.Id
+            ChocoId  = if ($Provider -eq 'choco') { $Item.Id } else { $null }
+            Cat      = 99
+            Sel      = $false
+            Provider = $Provider
         }
         $script:onlineCheckBoxes += $chk
 
@@ -424,26 +579,44 @@ function Initialize-UIController($winControls) {
         $q = $query.Trim()
         if (-not $q) { return }
 
+        $prov = $script:pkgProvider
+        $provLabel = if ($prov -eq 'choco') { 'Chocolatey' } else { 'WinGet' }
+        $chocoExe = $null
+        if ($prov -eq 'choco') {
+            if (-not (Ensure-ChocoReady)) { return }
+            $chocoExe = Get-ChocoExecutable
+        }
+
         $script:searchSeq++
         $seq = $script:searchSeq
 
         Show-SearchResultView
         if ($script:lblSearchResultStatus) {
-            $script:lblSearchResultStatus.Text = "Searching WinGet repository for `"$q`"..."
+            $script:lblSearchResultStatus.Text = "Searching $provLabel repository for `"$q`"..."
             $script:lblSearchResultStatus.Opacity = 1.0
         }
         if ($script:pbSearchLoading) { $script:pbSearchLoading.Visibility = "Visible" }
         Clear-OnlineSearchResults
 
-        $worker = {
-            param([string]$searchTerm)
-            [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-            winget search --query $searchTerm --source winget --accept-source-agreements --count 25 2>$null
+        if ($prov -eq 'choco') {
+            $worker = {
+                param([string]$searchTerm, [string]$exe)
+                [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+                & $exe search $searchTerm -r --page-size=25 2>$null
+            }
+            $workerArgs = @($q, $chocoExe)
+        } else {
+            $worker = {
+                param([string]$searchTerm)
+                [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+                winget search --query $searchTerm --source winget --accept-source-agreements --count 25 2>$null
+            }
+            $workerArgs = @($q)
         }
 
-        Start-BackgroundTask -Worker $worker -Arguments @($q) -Context @{ Seq = $seq; Query = $q } -OnComplete {
+        Start-BackgroundTask -Worker $worker -Arguments $workerArgs -Context @{ Seq = $seq; Query = $q; Provider = $prov; Label = $provLabel } -OnComplete {
             param($lines, $err, $ctx)
-            if ($ctx.Seq -ne $script:searchSeq) { return }
+            if ($ctx.Seq -ne $script:searchSeq -or $ctx.Provider -ne $script:pkgProvider) { return }
             if ($script:pbSearchLoading) { $script:pbSearchLoading.Visibility = "Collapsed" }
 
             if ($err) {
@@ -454,11 +627,15 @@ function Initialize-UIController($winControls) {
                 return
             }
 
-            $foundApps = @(ConvertFrom-WingetTable -Lines $lines)
+            $foundApps = if ($ctx.Provider -eq 'choco') {
+                @(ConvertFrom-ChocoLines -Lines $lines)
+            } else {
+                @(ConvertFrom-WingetTable -Lines $lines)
+            }
             Clear-OnlineSearchResults
             if ($foundApps.Count -eq 0) {
                 if ($script:lblSearchResultStatus) {
-                    $script:lblSearchResultStatus.Text = "No packages found for `"$($ctx.Query)`" in WinGet repository."
+                    $script:lblSearchResultStatus.Text = "No packages found for `"$($ctx.Query)`" in $($ctx.Label) repository."
                     $script:lblSearchResultStatus.Opacity = 0.8
                 }
                 return
@@ -470,7 +647,7 @@ function Initialize-UIController($winControls) {
             }
 
             foreach ($item in $foundApps) {
-                Add-OnlineResultCard -Item $item
+                Add-OnlineResultCard -Item $item -Provider $ctx.Provider
             }
         }
     }
@@ -607,9 +784,19 @@ function Initialize-UIController($winControls) {
         }
     })
 
+    # Package manager toggle handlers
+    if ($script:btnBackendWinget) {
+        $script:btnBackendWinget.Add_Click({ Set-PackageProvider 'winget' })
+    }
+    if ($script:btnBackendChoco) {
+        $script:btnBackendChoco.Add_Click({ Set-PackageProvider 'choco' })
+    }
+
     # Preset handlers
     $script:btnSelectAll.Add_Click({
-        foreach ($chk in $script:checkBoxes) { $chk.IsChecked = $true }
+        foreach ($chk in $script:checkBoxes) {
+            if ($chk.IsEnabled) { $chk.IsChecked = $true }
+        }
         Update-InstallCount
     })
 
@@ -646,9 +833,11 @@ function Initialize-UIController($winControls) {
     # Upgrade All handler
     if ($script:btnUpgradeAll) {
         $script:btnUpgradeAll.Add_Click({
+            $prov = $script:pkgProvider
+            if ($prov -eq 'choco' -and -not (Ensure-ChocoReady)) { return }
             Open-ProgressOverlay
             try {
-                Start-SystemUpgrade $script:winControls
+                Start-SystemUpgrade $script:winControls -Provider $prov
             } finally {
                 if ($script:btnInstall) { $script:btnInstall.IsEnabled = $true }
                 if ($script:btnUpgradeAll) { $script:btnUpgradeAll.IsEnabled = $true }
@@ -657,7 +846,7 @@ function Initialize-UIController($winControls) {
         })
     }
 
-    # Preset save handler (supports .json WinGet schema and legacy .txt)
+    # Preset save handler (supports .json schema and legacy .txt)
     $script:btnSave.Add_Click({
         $selectedApps = @(Get-SelectedApps)
         if ($selectedApps.Count -eq 0) {
@@ -674,7 +863,10 @@ function Initialize-UIController($winControls) {
 
         if ($sfd.ShowDialog() -eq $true) {
             try {
-                $ids = @($selectedApps | ForEach-Object { $_.Id })
+                $ids = @($selectedApps | ForEach-Object {
+                    $p = if ($_.Provider) { $_.Provider } else { $script:pkgProvider }
+                    Get-AppPackageId -App $_ -Provider $p
+                } | Where-Object { $_ })
                 if ($sfd.FileName.EndsWith(".json", [System.StringComparison]::OrdinalIgnoreCase)) {
                     $json = ConvertTo-WinKitPresetJson -PackageIds $ids
                     [System.IO.File]::WriteAllText($sfd.FileName, $json, [System.Text.UTF8Encoding]::new($false))
@@ -688,10 +880,10 @@ function Initialize-UIController($winControls) {
         }
     })
 
-    # Preset load handler (supports .json WinGet schema and legacy .txt)
+    # Preset load handler (supports .json schema and legacy .txt)
     $script:btnLoad.Add_Click({
         $ofd = New-Object Microsoft.Win32.OpenFileDialog
-        $ofd.Title = "Load Preset or WinGet Packages"
+        $ofd.Title = "Load Preset or Package List"
         $ofd.Filter = "Supported Presets (*.json;*.txt)|*.json;*.txt|WinGet Package List (*.json)|*.json|WinKit Preset (*.txt)|*.txt|All Files (*.*)|*.*"
         $ofd.FileName = "winkit-packages.json"
         $docs = [Environment]::GetFolderPath([Environment+SpecialFolder]::MyDocuments)
@@ -706,26 +898,30 @@ function Initialize-UIController($winControls) {
                     $matchedTargets = @{}
                     foreach ($chk in $script:checkBoxes) {
                         $app = if ($script:registeredApps.ContainsKey($chk.Uid)) { $script:registeredApps[$chk.Uid] } else { $null }
-                        $isChecked = ($null -ne $app -and ($targetIds -contains $app.Id -or $targetIds -contains $app.Name)) -or ($targetIds -contains $chk.Uid)
-                        $chk.IsChecked = $isChecked
-                        if ($isChecked -and $null -ne $app) {
+                        $isMatch = ($null -ne $app -and ($targetIds -contains $app.Id -or ($app.ChocoId -and $targetIds -contains $app.ChocoId) -or $targetIds -contains $app.Name)) -or ($targetIds -contains $chk.Uid)
+                        $chk.IsChecked = ($isMatch -and $chk.IsEnabled)
+                        if ($isMatch -and $null -ne $app) {
                             $matchedTargets[$app.Id] = $true
+                            if ($app.ChocoId) { $matchedTargets[$app.ChocoId] = $true }
                             $matchedTargets[$app.Name] = $true
                         }
                     }
 
                     $customCount = 0
+                    $prov = $script:pkgProvider
                     foreach ($tid in $targetIds) {
-                        if (-not $matchedTargets.ContainsKey($tid) -and (Test-SafePackageId $tid) -and $tid.Contains('.')) {
+                        $validCustom = (Test-SafePackageId $tid) -and ($prov -eq 'choco' -or $tid.Contains('.'))
+                        if (-not $matchedTargets.ContainsKey($tid) -and $validCustom) {
                             $matchedTargets[$tid] = $true
-                            Add-OnlineResultCard -Item ([PSCustomObject]@{ Name = $tid; Id = $tid; Version = "" }) -IsChecked $true
+                            Add-OnlineResultCard -Item ([PSCustomObject]@{ Name = $tid; Id = $tid; Version = "" }) -IsChecked $true -Provider $prov
                             $customCount++
                         }
                     }
 
                     Update-InstallCount
                     $totalSelected = @(Get-SelectedApps).Count
-                    $extraMsg = if ($customCount -gt 0) { "`n($customCount custom WinGet package(s) added to search results)" } else { "" }
+                    $provLabel = if ($prov -eq 'choco') { 'Chocolatey' } else { 'WinGet' }
+                    $extraMsg = if ($customCount -gt 0) { "`n($customCount custom $provLabel package(s) added to search results)" } else { "" }
                     [System.Windows.MessageBox]::Show("Loaded preset with $totalSelected selected application(s).$extraMsg", "WinKit", 0, 64)
                 } catch {
                     [System.Windows.MessageBox]::Show("Failed to load preset: $_", "Error", 0, 16)
@@ -780,11 +976,13 @@ function Initialize-UIController($winControls) {
     $script:btnInstall.Add_Click({
         $toInstall = @(Get-SelectedApps)
         if ($toInstall.Count -eq 0) { return }
-        Write-Host "Install button clicked. Selected apps: $($toInstall.Count)" -ForegroundColor Cyan
+        $prov = $script:pkgProvider
+        if ($prov -eq 'choco' -and -not (Ensure-ChocoReady)) { return }
+        Write-Host "Install button clicked ($prov). Selected apps: $($toInstall.Count)" -ForegroundColor Cyan
 
         Open-ProgressOverlay
         try {
-            Start-AppsInstallation $toInstall $script:winControls
+            Start-AppsInstallation $toInstall $script:winControls -Provider $prov
         } finally {
             $script:btnInstall.IsEnabled = $true
             if ($script:btnUpgradeAll) { $script:btnUpgradeAll.IsEnabled = $true }
@@ -826,6 +1024,7 @@ function Initialize-UIController($winControls) {
         Unregister-ThemeListener
     })
 
-    # Start non-blocking background scan for installed packages & updates
+    # Initialize provider toggle UI and start background scan for installed packages & updates
+    Update-ProviderUI
     Start-BackgroundPackageDetection
 }
